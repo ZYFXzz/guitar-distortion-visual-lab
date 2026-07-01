@@ -226,13 +226,13 @@
           // Positive: JFET exponential saturation (smooth rollover).
           // Negative: single diode → harder, lower threshold.
           if (d >= 0) {
-            s = pos * (1 - Math.exp(-d / pos));
+            s = pos * (1 - Math.exp(-d / pos * 1.6));
           } else {
             const a = -d / neg;
             // Soft knee up to threshold, then hard limit
             s = -(a < 1
               ? neg * (a - a * a * a / 3)
-              : neg * Math.min(1.0, 0.667 + 0.2 * (a - 1)));
+              : neg * Math.min(1.0, 0.7 + 0.4 * (a - 1)));
           }
 
         } else if (algo === "fuzz") {
@@ -258,9 +258,11 @@
           // Single diode: only NEGATIVE half clips (at lower threshold).
           // Positive half passes nearly clean through the op-amp.
           // Asymmetry produces even harmonics → "warm" but transparent.
-          s = d >= 0
-            ? pos * Math.tanh(d / pos)          // positive: very gentle tanh (pos=1.10)
-            : -neg * Math.tanh(-d / neg * 1.4); // negative: sharper clip at neg=0.45
+          const clean = d;
+          const clipped = d >= 0
+            ? d
+            : -neg * Math.tanh(-d / neg * 2.1);
+          s = 0.72 * clean + 0.28 * clipped; // preserve attack/transparency
         }
       }
       y[i] = s;
