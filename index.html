@@ -74,18 +74,20 @@
     <div class="row inline">
       <div>
         <label for="sineFreq">正弦波频率 (Hz)</label>
-        <span class="hint">类比：吉他某弦的基频，如 E2=82Hz、A2=110Hz</span>
-        <input id="sineFreq" type="range" min="80" max="1200" step="1" value="220" />
+        <span class="hint">范围：低音 E2(82Hz) 到高音弦 24 品 E6(≈1319Hz)</span>
+        <input id="sineFreq" type="range" min="82" max="1319" step="1" value="220" />
       </div>
-      <input id="sineFreqNum" type="number" min="80" max="1200" step="1" value="220" />
+      <input id="sineFreqNum" type="number" min="82" max="1319" step="1" value="220" />
     </div>
     <div class="row">
       <label for="inputFileChord">上传和弦音频（可选）</label>
       <input id="inputFileChord" type="file" accept="audio/*" />
+      <span id="chordStatus" class="hint">未加载外部文件</span>
     </div>
     <div class="row">
       <label for="inputFileSingle">上传单音音频（可选）</label>
       <input id="inputFileSingle" type="file" accept="audio/*" />
+      <span id="singleStatus" class="hint">未加载外部文件</span>
     </div>
 
     <h3>增益与失真</h3>
@@ -198,6 +200,32 @@
         </div>
       </div>
     </div>
+    <div class="row inline">
+      <div>
+        <label for="fftMaxHz">FFT 最大频率 (Hz)</label>
+        <span class="hint">固定坐标轴上限，范围 5k~20k</span>
+        <input id="fftMaxHz" type="range" min="5000" max="20000" step="100" value="5000" />
+      </div>
+      <input id="fftMaxHzNum" type="number" min="5000" max="20000" step="100" value="5000" />
+    </div>
+    <div class="switch-row">
+      <div class="switch-label-wrap">
+        <div class="switch-label">FFT 频率轴 Log</div>
+        <span class="hint">关闭=线性频率轴，开启=对数频率轴</span>
+      </div>
+      <label class="switch">
+        <input id="fftLogX" type="checkbox" />
+        <span class="sw-track"></span>
+      </label>
+    </div>
+    <div class="row inline">
+      <div>
+        <label for="playbackGainDb">播放音量 Output Playback (dB)</label>
+        <span class="hint">只影响播放，不影响图像分析。默认 -6 dB 保护耳朵/音箱</span>
+        <input id="playbackGainDb" type="range" min="-24" max="0" step="0.1" value="-6" />
+      </div>
+      <input id="playbackGainDbNum" type="number" min="-24" max="0" step="0.1" value="-6" />
+    </div>
 
     <div class="btns">
       <button id="btnRender">刷新 Render</button>
@@ -210,6 +238,7 @@
 
     <div class="legend">
       🟢 绿色 = 输入信号（含 Gain）<br>
+      🟡 黄虚线 = Drive 放大后的预削波信号（进入 clipping 前）<br>
       🔵 蓝色 = 输出信号（削波后）<br>
       <span style="color:#ffb478">- - -</span> 橙虚线 = 削波阈值
     </div>

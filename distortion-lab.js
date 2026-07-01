@@ -2,14 +2,15 @@
   const sampleRate = 44100;
   const durationSec = 2.0;
   const FIXED_INPUT_GAIN_DB = 0;
-  const FFT_VIEW_MAX_HZ = 5000;
-  const FFT_DB_MIN = -110;
+  const FFT_DB_MIN = -60;
   const FFT_DB_MAX = 10;
+  const HPF_CUTOFF_HZ = 50;
 
   const $ = (id) => document.getElementById(id);
   const els = {
     sourceType: $("sourceType"), sineFreq: $("sineFreq"), sineFreqNum: $("sineFreqNum"),
     inputFileChord: $("inputFileChord"), inputFileSingle: $("inputFileSingle"),
+    chordStatus: $("chordStatus"), singleStatus: $("singleStatus"),
     gainDb: $("gainDb"), gainDbNum: $("gainDbNum"), gainRow: $("gainRow"),
     distOn: $("distOn"), algo: $("algo"),
     threshold: $("threshold"), thresholdNum: $("thresholdNum"),
@@ -23,6 +24,8 @@
     timeCanvas: $("timeCanvas"), timeOutCanvas: $("timeOutCanvas"), freqCanvas: $("freqCanvas"),
     threshRow: $("threshRow"), asymRow: $("asymRow"),
     fftModeEco: $("fftModeEco"), fftModeBalanced: $("fftModeBalanced"), fftModeDetail: $("fftModeDetail"),
+    fftMaxHz: $("fftMaxHz"), fftMaxHzNum: $("fftMaxHzNum"), fftLogX: $("fftLogX"),
+    playbackGainDb: $("playbackGainDb"), playbackGainDbNum: $("playbackGainDbNum"),
   };
 
   const ctxTime    = els.timeCanvas.getContext("2d");
@@ -30,7 +33,7 @@
   const ctxFreq    = els.freqCanvas.getContext("2d");
 
   const state = {
-    inputRaw: null, inputGained: null, output: null,
+    inputRaw: null, inputGained: null, preClip: null, output: null,
     chordBuffer: null, singleBuffer: null,
     audioCtx: null, sourceNode: null,
   };
@@ -169,6 +172,16 @@
     return out;
   }
 
+  function onePoleHighpass(signal, cutoffHz, sr) {
+    const out = new Float32Array(signal.length);
+    const dt = 1 / sr;
+    const rc = 1 / (2 * Math.PI * cutoffHz);
+    const alpha = rc / (rc + dt);
+    out[0] = signal[0] || 0;
+    for (let i = 1; i < signal.length; i++) out[i] = alpha * (out[i - 1] + signal[i] - signal[i - 1]);
+    return out;
+  }
+
   function downsample(signal, factor, outLen) {
     if (factor <= 1) return signal.slice(0, outLen);
     const out = new Float32Array(outLen);
@@ -284,11 +297,24 @@
     for (let i = 0; i < x.length; i++) out[i] = x[i] * g;
     return out;
   }
+  function applyFadeInOut(buffer, sr) {
+    const out = buffer.slice();
+    const fadeSamples = Math.min(Math.floor(out.length / 8), Math.max(64, Math.floor(sr * 0.01))); // ~10ms
+    for (let i = 0; i < fadeSamples; i++) {
+      const g = i / fadeSamples;
+      out[i] *= g;
+      out[out.length - 1 - i] *= g;
+    }
+    return out;
+  }
   function play(buffer) {
     stopPlayback();
     const ac = ensureAudioCtx();
     const b = ac.createBuffer(1, buffer.length, sampleRate);
-    b.copyToChannel(normalizeForPlayback(buffer), 0);
+    const playbackLin = dbToLin(+els.playbackGainDb.value);
+    const safe = applyFadeInOut(normalizeForPlayback(buffer), sampleRate);
+    for (let i = 0; i < safe.length; i++) safe[i] *= playbackLin;
+    b.copyToChannel(safe, 0);
     const src = ac.createBufferSource();
     src.buffer = b; src.connect(ac.destination); src.start();
     state.sourceNode = src;
@@ -444,24 +470,28 @@
     }
   }
 
-  function drawAxisLabelsFreq(ctx, area) {
+  function drawAxisLabelsFreq(ctx, area, maxHz, logX) {
     ctx.fillStyle = "#9eb1cc";
     ctx.font = "10px system-ui, sans-serif";
     ctx.fillText("Magnitude (dBFS)", 6, area.t + 10);
-    ctx.fillText("Frequency (Hz)", area.l + area.w - 66, area.t + area.h + 24);
-    const yTicks = [-100, -80, -60, -40, -20, 0];
+    ctx.fillText(`Frequency (Hz) ${logX ? "[log]" : "[linear]"}`, area.l + area.w - 102, area.t + area.h + 24);
+    const yTicks = [-60, -50, -40, -30, -20, -10, 0];
     for (const t of yTicks) {
       const y = area.t + area.h * (1 - (t - FFT_DB_MIN) / (FFT_DB_MAX - FFT_DB_MIN));
       ctx.fillText(`${t}`, area.l - 30, y + 3);
     }
-    const xTicks = [0, 1000, 2000, 3000, 4000, 5000];
-    for (const f of xTicks) {
-      const x = area.l + area.w * (f / FFT_VIEW_MAX_HZ);
+    const xTicks = logX ? [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000].filter(v => v <= maxHz) : [0, maxHz * 0.25, maxHz * 0.5, maxHz * 0.75, maxHz];
+    const minLogHz = 20;
+    for (const f0 of xTicks) {
+      const f = Math.max(minLogHz, f0);
+      const x = logX
+        ? area.l + area.w * (Math.log10(f / minLogHz) / Math.log10(maxHz / minLogHz))
+        : area.l + area.w * (f / maxHz);
       ctx.fillText(`${f}`, x - 10, area.t + area.h + 14);
     }
   }
 
-  function drawTime(inSig, outSig, pos, neg) {
+  function drawTime(inSig, preClipSig, outSig, pos, neg) {
     const w = els.timeCanvas.clientWidth, h = els.timeCanvas.clientHeight;
     const yS = 2.0;
     const fullArea = { l: 52, t: 26, w: Math.max(10, w - 68), h: Math.max(10, h - 58) };
@@ -476,11 +506,17 @@
       ctxTime.beginPath(); ctxTime.moveTo(fullArea.l, fullArea.t + half); ctxTime.lineTo(fullArea.l + fullArea.w, fullArea.t + half); ctxTime.stroke();
       drawThreshLines(ctxTime, topArea, pos, neg, yS);
       drawWave(ctxTime, topArea, inSig,  "rgba(0,230,110,0.9)",  1.4, start,end, yS);
+      ctxTime.setLineDash([6, 4]);
+      drawWave(ctxTime, topArea, preClipSig, "rgba(235,220,90,0.9)", 1.2, start, end, yS);
+      ctxTime.setLineDash([]);
       drawThreshLines(ctxTime, botArea, pos, neg, yS);
       drawWave(ctxTime, botArea, outSig, "rgba(90,160,255,0.9)", 1.5, start,end, yS);
     } else {
       drawThreshLines(ctxTime, fullArea, pos, neg, yS);
       drawWave(ctxTime, fullArea, inSig,  "rgba(0,230,110,0.9)",  1.4, start,end, yS);
+      ctxTime.setLineDash([6, 4]);
+      drawWave(ctxTime, fullArea, preClipSig, "rgba(235,220,90,0.9)", 1.2, start, end, yS);
+      ctxTime.setLineDash([]);
       drawWave(ctxTime, fullArea, outSig, "rgba(90,160,255,0.9)", 1.5, start,end, yS);
     }
     drawAxisLabelsTime(ctxTime, fullArea, windowMs, yS);
@@ -501,16 +537,22 @@
     const w = els.freqCanvas.clientWidth, h = els.freqCanvas.clientHeight;
     const area = { l: 56, t: 26, w: Math.max(10, w - 76), h: Math.max(10, h - 60) };
     drawGrid(ctxFreq, area, 10, 8);
+    const maxHz = +els.fftMaxHz.value;
+    const logX = !!els.fftLogX.checked;
     const cfg = getFftConfig();
     const inMag = fftMagAveraged(inSig, cfg.fftLen, cfg.hop);
     const outMag = fftMagAveraged(outSig, cfg.fftLen, cfg.hop);
-    const maxBins = Math.floor((FFT_VIEW_MAX_HZ / (sampleRate / 2)) * inMag.length);
+    const maxBins = Math.max(2, Math.floor((maxHz / (sampleRate / 2)) * inMag.length));
+    const minLogHz = 20;
     const toY = db => area.t + area.h * (1 - (db - FFT_DB_MIN) / (FFT_DB_MAX - FFT_DB_MIN));
     const drawMag = (mag, color) => {
       ctxFreq.strokeStyle = color; ctxFreq.lineWidth = 1.5; ctxFreq.beginPath();
       for (let i = 0; i < maxBins; i++) {
         const freq = (i / (mag.length - 1)) * (sampleRate / 2);
-        const x = area.l + area.w * (freq / FFT_VIEW_MAX_HZ);
+        const fx = Math.max(minLogHz, freq);
+        const x = logX
+          ? area.l + area.w * (Math.log10(fx / minLogHz) / Math.log10(maxHz / minLogHz))
+          : area.l + area.w * (freq / maxHz);
         const y = toY(clamp(linToDb(mag[i]), FFT_DB_MIN, FFT_DB_MAX));
         i===0 ? ctxFreq.moveTo(x,y) : ctxFreq.lineTo(x,y);
       }
@@ -518,7 +560,7 @@
     };
     drawMag(inMag,  "rgba(0,230,110,0.9)");
     drawMag(outMag, "rgba(90,160,255,0.9)");
-    drawAxisLabelsFreq(ctxFreq, area);
+    drawAxisLabelsFreq(ctxFreq, area, maxHz, logX);
   }
 
   // ─── Render pipeline ──────────────────────────────────────────────────────
@@ -530,7 +572,8 @@
   }
 
   async function renderAll() {
-    const raw = await getInputSignal();
+    let raw = await getInputSignal();
+    raw = onePoleHighpass(raw, HPF_CUTOFF_HZ, sampleRate); // default 50Hz cleanup to reduce LF noise floor
     const gain = dbToLin(FIXED_INPUT_GAIN_DB);
     const gained = new Float32Array(raw.length);
     for (let i = 0; i < raw.length; i++) gained[i] = raw[i] * gain;
@@ -542,9 +585,12 @@
       asymOn: els.asymToggle.checked,
     };
     const fftCfg = getFftConfig();
+    const preClip = new Float32Array(gained.length);
+    const driveLin = dbToLin(+els.drive.value);
+    for (let i = 0; i < preClip.length; i++) preClip[i] = gained[i] * driveLin;
     const { output, pos, neg } = processDistortionWithAA(gained, cfg, fftCfg.oversample);
-    state.inputRaw=raw; state.inputGained=gained; state.output=output;
-    drawTime(gained, output, pos, neg);
+    state.inputRaw=raw; state.inputGained=gained; state.preClip = preClip; state.output=output;
+    drawTime(gained, preClip, output, pos, neg);
     drawTimeOut(output, pos, neg);
     drawFreq(gained, output);
   }
@@ -563,12 +609,34 @@
 
   async function initFileHandlers() {
     els.inputFileChord.addEventListener("change", async () => {
-      state.chordBuffer = await loadFile(els.inputFileChord.files?.[0] || null);
-      if (els.sourceType.value === "guitar_chord") renderAll();
+      try {
+        const f = els.inputFileChord.files?.[0] || null;
+        state.chordBuffer = await loadFile(f);
+        if (state.chordBuffer) {
+          els.chordStatus.textContent = `已加载: ${f.name}`;
+          els.sourceType.value = "guitar_chord";
+        } else {
+          els.chordStatus.textContent = "未加载外部文件";
+        }
+        renderAll();
+      } catch (e) {
+        els.chordStatus.textContent = "加载失败：文件格式不支持";
+      }
     });
     els.inputFileSingle.addEventListener("change", async () => {
-      state.singleBuffer = await loadFile(els.inputFileSingle.files?.[0] || null);
-      if (els.sourceType.value === "guitar_single") renderAll();
+      try {
+        const f = els.inputFileSingle.files?.[0] || null;
+        state.singleBuffer = await loadFile(f);
+        if (state.singleBuffer) {
+          els.singleStatus.textContent = `已加载: ${f.name}`;
+          els.sourceType.value = "guitar_single";
+        } else {
+          els.singleStatus.textContent = "未加载外部文件";
+        }
+        renderAll();
+      } catch (e) {
+        els.singleStatus.textContent = "加载失败：文件格式不支持";
+      }
     });
   }
 
@@ -578,9 +646,11 @@
     bindPair(els.drive, els.driveNum);
     bindPair(els.timeWindowMs, els.timeWindowMsNum);
     bindPair(els.timeOffsetMs, els.timeOffsetMsNum);
+    bindPair(els.fftMaxHz, els.fftMaxHzNum);
+    bindPair(els.playbackGainDb, els.playbackGainDbNum);
 
     els.algo.addEventListener("change", () => { updateAlgoUI(); renderAll(); });
-    [els.sourceType, els.distOn, els.asymToggle, els.splitView]
+    [els.sourceType, els.distOn, els.asymToggle, els.splitView, els.fftLogX]
       .forEach(el => el.addEventListener("change", renderAll));
     [els.fftModeEco, els.fftModeBalanced, els.fftModeDetail]
       .forEach(el => el?.addEventListener("change", renderAll));
