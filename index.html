@@ -75,6 +75,15 @@
     }
     .freq-controls .row { margin-bottom: 5px; }
     .freq-controls .switch-row { margin-bottom: 0; }
+    .scope-controls {
+      position: absolute; right: 8px; top: 8px; z-index: 3; width: 260px;
+      background: rgba(10,12,16,.82); border: 1px solid #2e3a4f; border-radius: 6px; padding: 6px;
+      backdrop-filter: blur(2px);
+    }
+    .scope-controls .row { margin-bottom: 5px; }
+    .scope-controls .switch-row { margin-bottom: 0; }
+    details.fold { border: 1px solid #304056; border-radius: 6px; padding: 6px; margin-bottom: 8px; }
+    details.fold > summary { cursor: pointer; font-size: 11px; color: #d6e2f4; font-weight: 600; }
   </style>
 </head>
 <body>
@@ -84,14 +93,16 @@
     <span class="hint" style="margin:0 0 2px">吉他失真底层原理可视化 · 波形 + 频谱实时演示</span>
 
     <h3>输入源</h3>
-    <div class="row knob-wrap">
+    <details id="inputFold" class="fold" open>
+      <summary>输入区域（可折叠）</summary>
+      <div class="row knob-wrap">
       <label>输入选择旋钮（6挡）</label>
       <span class="hint">点击圆钮切换：正弦波 / 合成单音 / 合成和弦 / 文件1 / 文件2 / 文件3</span>
       <div id="sourceKnob" class="knob-ui" role="button" aria-label="source knob" tabindex="0"></div>
       <div id="sourceKnobLabel" class="knob-caption">正弦波</div>
       <input id="sourceKnobIdx" type="range" min="0" max="5" step="1" value="0" style="display:none;" />
-    </div>
-    <div class="row inline">
+      </div>
+      <div class="row inline">
       <div>
         <label for="sineFreq">正弦波频率 (Hz)</label>
         <span class="hint">范围：低音 E2(82Hz) 到高音弦 24 品 E6(≈1319Hz)，建议 220~440Hz（更不炸耳）</span>
@@ -102,26 +113,27 @@
         </datalist>
       </div>
       <input id="sineFreqNum" type="number" min="82" max="1319" step="1" value="220" />
-    </div>
-    <div class="mini-btns">
+      </div>
+      <div class="mini-btns">
       <button id="snap220" type="button">Snap 220Hz</button>
       <button id="snap440" type="button">Snap 440Hz</button>
-    </div>
-    <div class="row">
-      <label for="inputFile1">文件槽位 1（≤10秒）</label>
+      </div>
+      <div class="row">
+      <label for="inputFile1">文件槽位 1（≤30秒）</label>
       <input id="inputFile1" type="file" accept="audio/*" />
       <span id="fileStatus1" class="hint">未加载外部文件</span>
-    </div>
-    <div class="row">
-      <label for="inputFile2">文件槽位 2（≤10秒）</label>
+      </div>
+      <div class="row">
+      <label for="inputFile2">文件槽位 2（≤30秒）</label>
       <input id="inputFile2" type="file" accept="audio/*" />
       <span id="fileStatus2" class="hint">未加载外部文件</span>
-    </div>
-    <div class="row">
-      <label for="inputFile3">文件槽位 3（≤10秒）</label>
+      </div>
+      <div class="row">
+      <label for="inputFile3">文件槽位 3（≤30秒）</label>
       <input id="inputFile3" type="file" accept="audio/*" />
       <span id="fileStatus3" class="hint">未加载外部文件</span>
-    </div>
+      </div>
+    </details>
 
     <h3>增益与失真</h3>
     <div id="gainRow" class="row inline" style="display:none;">
@@ -167,13 +179,14 @@
       <input id="thresholdNum" type="number" min="0.1" max="1.0" step="0.01" value="0.65" />
     </div>
 
-    <div class="row inline">
-      <div>
-        <label for="drive">驱动量 Drive (dB)</label>
-        <span class="hint">相当于效果器的 <strong>Gain / Drive</strong> 旋钮，控制削波级内部放大倍数。Drive 越高 = 信号越容易超出阈值 = 失真量越大</span>
-        <input id="drive" type="range" min="0" max="20" step="0.1" value="8" />
+    <div class="row">
+      <label for="drive">驱动量 Drive (dB)</label>
+      <span class="hint">圆形旋钮：更贴近单块效果器；鼠标滚轮/拖动可调</span>
+      <div class="knob-wrap">
+        <div id="driveKnob" class="knob-ui" role="button" aria-label="drive knob" tabindex="0"></div>
+        <div class="knob-caption"><input id="driveNum" type="number" min="0" max="20" step="0.1" value="8" /></div>
       </div>
-      <input id="driveNum" type="number" min="0" max="20" step="0.1" value="8" />
+      <input id="drive" type="range" min="0" max="20" step="0.1" value="8" style="display:none;" />
     </div>
 
     <div id="asymRow" class="switch-row">
@@ -187,33 +200,11 @@
       </label>
     </div>
 
-    <h3>示波器视图</h3>
-    <div class="row inline">
-      <div>
-        <label for="timeWindowMs">时间窗口 Time Window (ms)</label>
-        <span class="hint">示波器横轴缩放。调短可看清高频波形细节（如 5ms 可看约 2 个 220Hz 周期）</span>
-        <input id="timeWindowMs" type="range" min="5" max="200" step="1" value="40" />
-      </div>
-      <input id="timeWindowMsNum" type="number" min="5" max="200" step="1" value="40" />
-    </div>
-    <div class="row inline">
-      <div>
-        <label for="timeOffsetMs">时间偏移 Offset (ms)</label>
-        <span class="hint">从第几毫秒开始显示，用于平移查看不同波形区间</span>
-        <input id="timeOffsetMs" type="range" min="0" max="9900" step="1" value="0" />
-      </div>
-      <input id="timeOffsetMsNum" type="number" min="0" max="9900" step="1" value="0" />
-    </div>
-    <div class="switch-row">
-      <div class="switch-label-wrap">
-        <div class="switch-label">分层显示 Split View</div>
-        <span class="hint">将输入（绿）和输出（蓝）上下分开显示，便于对比波形形状变化</span>
-      </div>
-      <label class="switch">
-        <input id="splitView" type="checkbox" />
-        <span class="sw-track"></span>
-      </label>
-    </div>
+    <input id="timeWindowMs" type="range" min="5" max="200" step="1" value="40" style="display:none;" />
+    <input id="timeWindowMsNum" type="number" min="5" max="200" step="1" value="40" style="display:none;" />
+    <input id="timeOffsetMs" type="range" min="0" max="9900" step="1" value="0" style="display:none;" />
+    <input id="timeOffsetMsNum" type="number" min="0" max="9900" step="1" value="0" style="display:none;" />
+    <input id="splitView" type="checkbox" style="display:none;" />
 
     <div class="row inline">
       <div>
@@ -245,6 +236,29 @@
     <div class="time-row">
       <div class="card">
         <h4>时域主窗口 · 输入（绿）vs 输出（蓝）+ 阈值虚线</h4>
+        <div class="scope-controls">
+          <div class="row inline">
+            <div>
+              <label for="timeWindowMsUi">Time Window (ms)</label>
+              <input id="timeWindowMsUi" type="range" min="5" max="200" step="1" value="40" />
+            </div>
+            <input id="timeWindowMsUiNum" type="number" min="5" max="200" step="1" value="40" />
+          </div>
+          <div class="row inline">
+            <div>
+              <label for="timeOffsetMsUi">Time Offset (ms)</label>
+              <input id="timeOffsetMsUi" type="range" min="0" max="9900" step="1" value="0" />
+            </div>
+            <input id="timeOffsetMsUiNum" type="number" min="0" max="9900" step="1" value="0" />
+          </div>
+          <div class="switch-row">
+            <div class="switch-label-wrap"><div class="switch-label">Split View</div></div>
+            <label class="switch">
+              <input id="splitViewUi" type="checkbox" />
+              <span class="sw-track"></span>
+            </label>
+          </div>
+        </div>
         <canvas id="timeCanvas"></canvas>
       </div>
       <div class="card">

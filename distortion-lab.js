@@ -9,6 +9,7 @@
 
   const $ = (id) => document.getElementById(id);
   const els = {
+    inputFold: $("inputFold"),
     sourceKnob: $("sourceKnob"), sourceKnobIdx: $("sourceKnobIdx"), sourceKnobLabel: $("sourceKnobLabel"),
     snap220: $("snap220"), snap440: $("snap440"),
     sineFreq: $("sineFreq"), sineFreqNum: $("sineFreqNum"),
@@ -17,11 +18,11 @@
     gainDb: $("gainDb"), gainDbNum: $("gainDbNum"), gainRow: $("gainRow"),
     distOn: $("distOn"), algo: $("algo"),
     threshold: $("threshold"), thresholdNum: $("thresholdNum"),
-    drive: $("drive"), driveNum: $("driveNum"),
+    drive: $("drive"), driveNum: $("driveNum"), driveKnob: $("driveKnob"),
     asymToggle: $("asymToggle"),
-    timeWindowMs: $("timeWindowMs"), timeWindowMsNum: $("timeWindowMsNum"),
-    timeOffsetMs: $("timeOffsetMs"), timeOffsetMsNum: $("timeOffsetMsNum"),
-    splitView: $("splitView"),
+    timeWindowMs: $("timeWindowMsUi") || $("timeWindowMs"), timeWindowMsNum: $("timeWindowMsUiNum") || $("timeWindowMsNum"),
+    timeOffsetMs: $("timeOffsetMsUi") || $("timeOffsetMs"), timeOffsetMsNum: $("timeOffsetMsUiNum") || $("timeOffsetMsNum"),
+    splitView: $("splitViewUi") || $("splitView"),
     btnRender: $("btnRender"), btnPlayIn: $("btnPlayIn"),
     btnPlayOut: $("btnPlayOut"), btnStop: $("btnStop"),
     timeCanvas: $("timeCanvas"), timeOutCanvas: $("timeOutCanvas"), freqCanvas: $("freqCanvas"),
@@ -318,7 +319,7 @@
   }
 
   // ─── File loading ─────────────────────────────────────────────────────────
-  function toMonoFloat32(audioBuffer, maxSeconds = 10) {
+  function toMonoFloat32(audioBuffer, maxSeconds = 30) {
     const len = audioBuffer.length, channels = audioBuffer.numberOfChannels;
     const out = new Float32Array(len);
     for (let ch = 0; ch < channels; ch++) {
@@ -338,11 +339,16 @@
     }
     return out;
   }
-  async function loadFile(file, maxSeconds = 10) {
+  async function loadFile(file, maxSeconds = 30) {
     if (!file) return null;
     const arr = await file.arrayBuffer();
     const ac = ensureAudioCtx();
     const decoded = await ac.decodeAudioData(arr.slice(0));
+    if (decoded.duration > maxSeconds) {
+      const err = new Error(`文件长度超过 ${maxSeconds}s`);
+      err.code = "FILE_TOO_LONG";
+      throw err;
+    }
     return toMonoFloat32(decoded, maxSeconds);
   }
 
@@ -570,7 +576,14 @@
 
   // ─── Render pipeline ──────────────────────────────────────────────────────
   function getSourceMode() {
-    return +els.sourceKnobIdx.value;
+    const v = Number.parseInt(els.sourceKnobIdx.value, 10);
+    return Number.isFinite(v) ? clamp(v, 0, 5) : 0;
+  }
+
+  function setSourceMode(idx, rerender = true) {
+    els.sourceKnobIdx.value = String(clamp(Math.round(idx), 0, 5));
+    updateSourceKnobUI();
+    if (rerender) renderAll();
   }
 
   function updateSourceKnobUI() {
@@ -578,6 +591,16 @@
     const deg = -130 + idx * (260 / 5);
     els.sourceKnob.style.transform = `rotate(${deg}deg)`;
     els.sourceKnobLabel.textContent = SOURCE_LABELS[idx] || SOURCE_LABELS[0];
+  }
+
+  function setDriveValue(v, rerender = true) {
+    const clamped = clamp(v, +els.drive.min, +els.drive.max);
+    els.drive.value = clamped.toFixed(1);
+    els.driveNum.value = clamped.toFixed(1);
+    const norm = (clamped - (+els.drive.min)) / (+els.drive.max - +els.drive.min);
+    const deg = -130 + norm * 260;
+    if (els.driveKnob) els.driveKnob.style.transform = `rotate(${deg}deg)`;
+    if (rerender) renderAll();
   }
 
   async function getInputSignal() {
@@ -589,27 +612,31 @@
   }
 
   async function renderAll() {
-    let raw = await getInputSignal();
-    raw = onePoleHighpass(raw, HPF_CUTOFF_HZ, sampleRate); // default 50Hz cleanup to reduce LF noise floor
-    const gain = dbToLin(FIXED_INPUT_GAIN_DB);
-    const gained = new Float32Array(raw.length);
-    for (let i = 0; i < raw.length; i++) gained[i] = raw[i] * gain;
-    els.gainDb.value = FIXED_INPUT_GAIN_DB;
-    els.gainDbNum.value = FIXED_INPUT_GAIN_DB;
-    const cfg = {
-      distOn: els.distOn.checked, algo: els.algo.value,
-      threshold: +els.threshold.value, driveDb: +els.drive.value,
-      asymOn: els.asymToggle.checked,
-    };
-    const fftCfg = getFftConfig();
-    const preClip = new Float32Array(gained.length);
-    const driveLin = dbToLin(+els.drive.value);
-    for (let i = 0; i < preClip.length; i++) preClip[i] = gained[i] * driveLin;
-    const { output, pos, neg } = processDistortionWithAA(gained, cfg, fftCfg.oversample);
-    state.inputRaw=raw; state.inputGained=gained; state.preClip = preClip; state.output=output;
-    drawTime(gained, preClip, output, pos, neg);
-    drawTimeOut(output, pos, neg);
-    drawFreq(gained, output);
+    try {
+      let raw = await getInputSignal();
+      raw = onePoleHighpass(raw, HPF_CUTOFF_HZ, sampleRate); // default 50Hz cleanup to reduce LF noise floor
+      const gain = dbToLin(FIXED_INPUT_GAIN_DB);
+      const gained = new Float32Array(raw.length);
+      for (let i = 0; i < raw.length; i++) gained[i] = raw[i] * gain;
+      els.gainDb.value = FIXED_INPUT_GAIN_DB;
+      els.gainDbNum.value = FIXED_INPUT_GAIN_DB;
+      const cfg = {
+        distOn: els.distOn.checked, algo: els.algo.value,
+        threshold: +els.threshold.value, driveDb: +els.drive.value,
+        asymOn: els.asymToggle.checked,
+      };
+      const fftCfg = getFftConfig();
+      const preClip = new Float32Array(gained.length);
+      const driveLin = dbToLin(+els.drive.value);
+      for (let i = 0; i < preClip.length; i++) preClip[i] = gained[i] * driveLin;
+      const { output, pos, neg } = processDistortionWithAA(gained, cfg, fftCfg.oversample);
+      state.inputRaw=raw; state.inputGained=gained; state.preClip = preClip; state.output=output;
+      drawTime(gained, preClip, output, pos, neg);
+      drawTimeOut(output, pos, neg);
+      drawFreq(gained, output);
+    } catch (e) {
+      console.error("renderAll failed:", e);
+    }
   }
 
   // ─── UI helpers ───────────────────────────────────────────────────────────
@@ -637,19 +664,22 @@
             renderAll();
             return;
           }
-          const buf = await loadFile(f, 10);
+          const buf = await loadFile(f, 30);
           if (buf && buf.length > 0) {
             state.fileBuffers[i] = buf;
             const sec = (buf.length / sampleRate).toFixed(2);
-            statusEls[i].textContent = `已加载: ${f.name} (${sec}s, 最长10s)`;
-            els.sourceKnobIdx.value = String(3 + i);
-            updateSourceKnobUI();
+            statusEls[i].textContent = `已加载: ${f.name} (${sec}s, 最长30s)`;
+            setSourceMode(3 + i, false);
           } else {
             statusEls[i].textContent = "未加载外部文件";
           }
           renderAll();
         } catch (e) {
-          statusEls[i].textContent = "加载失败：文件格式不支持";
+          if (e?.code === "FILE_TOO_LONG") {
+            statusEls[i].textContent = "上传失败：音频超过30秒，请裁剪后重试";
+          } else {
+            statusEls[i].textContent = "加载失败：文件损坏或格式不支持";
+          }
         }
       });
     });
@@ -658,7 +688,6 @@
   function bindEvents() {
     bindPair(els.sineFreq, els.sineFreqNum);
     bindPair(els.threshold, els.thresholdNum);
-    bindPair(els.drive, els.driveNum);
     bindPair(els.timeWindowMs, els.timeWindowMsNum);
     bindPair(els.timeOffsetMs, els.timeOffsetMsNum);
     bindPair(els.fftMaxHz, els.fftMaxHzNum);
@@ -668,22 +697,38 @@
     els.algo.addEventListener("change", () => { updateAlgoUI(); renderAll(); });
     [els.distOn, els.asymToggle, els.splitView, els.fftLogX]
       .forEach(el => el.addEventListener("change", renderAll));
-    els.sourceKnob.addEventListener("click", () => {
-      els.sourceKnobIdx.value = String((+els.sourceKnobIdx.value + 1) % 6);
-      updateSourceKnobUI();
-      renderAll();
-    });
+    els.sourceKnob.addEventListener("click", () => setSourceMode((getSourceMode() + 1) % 6));
     els.sourceKnob.addEventListener("keydown", (e) => {
       if (e.key === "ArrowRight" || e.key === "ArrowUp") {
-        els.sourceKnobIdx.value = String(Math.min(5, +els.sourceKnobIdx.value + 1));
-        updateSourceKnobUI(); renderAll();
+        setSourceMode(getSourceMode() + 1);
       }
       if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
-        els.sourceKnobIdx.value = String(Math.max(0, +els.sourceKnobIdx.value - 1));
-        updateSourceKnobUI(); renderAll();
+        setSourceMode(getSourceMode() - 1);
       }
     });
-    els.sourceKnobIdx.addEventListener("input", () => { updateSourceKnobUI(); renderAll(); });
+    els.sourceKnob.addEventListener("wheel", (e) => { e.preventDefault(); setSourceMode(getSourceMode() + (e.deltaY > 0 ? 1 : -1)); }, { passive: false });
+    els.sourceKnobIdx.addEventListener("input", () => setSourceMode(getSourceMode()));
+
+    // Drive circular knob interactions
+    els.drive.addEventListener("input", () => setDriveValue(+els.drive.value));
+    els.driveNum.addEventListener("input", () => setDriveValue(+els.driveNum.value));
+    if (els.driveKnob) {
+      els.driveKnob.addEventListener("wheel", (e) => { e.preventDefault(); setDriveValue(+els.drive.value + (e.deltaY > 0 ? -0.3 : 0.3)); }, { passive: false });
+      let dragY = null;
+      els.driveKnob.addEventListener("mousedown", (e) => { dragY = e.clientY; });
+      window.addEventListener("mousemove", (e) => {
+        if (dragY === null) return;
+        const dy = dragY - e.clientY;
+        dragY = e.clientY;
+        setDriveValue(+els.drive.value + dy * 0.05);
+      });
+      window.addEventListener("mouseup", () => { dragY = null; });
+      els.driveKnob.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowRight" || e.key === "ArrowUp") setDriveValue(+els.drive.value + 0.2);
+        if (e.key === "ArrowLeft" || e.key === "ArrowDown") setDriveValue(+els.drive.value - 0.2);
+      });
+    }
+
     els.snap220?.addEventListener("click", () => { els.sineFreq.value = "220"; els.sineFreqNum.value = "220"; renderAll(); });
     els.snap440?.addEventListener("click", () => { els.sineFreq.value = "440"; els.sineFreqNum.value = "440"; renderAll(); });
 
@@ -704,7 +749,8 @@
     updateAlgoUI();
     els.fftDbMin.value = String(FFT_DB_MIN_DEFAULT);
     els.fftDbMinNum.value = String(FFT_DB_MIN_DEFAULT);
-    updateSourceKnobUI();
+    setSourceMode(0, false);
+    setDriveValue(+els.drive.value, false);
     requestAnimationFrame(() => resizeAll());
   }
 
