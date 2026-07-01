@@ -39,8 +39,17 @@
     .switch input:checked + .sw-track::before { transform: translateX(20px); }
 
     /* stage */
-    .stage { display: grid; grid-template-rows: 40% 48% 12%; gap: 6px; padding: 6px; height: 100vh; }
-    .time-row { display: grid; grid-template-columns: 2fr 1fr; gap: 6px; }
+    .stage-shell { display: flex; flex-direction: column; height: 100vh; padding: 6px; gap: 6px; }
+    .transport-bar {
+      height: 64px; flex: 0 0 64px;
+      display: grid; grid-template-columns: 1fr 520px; gap: 8px;
+      background: #0f131a; border: 1px solid #263040; border-radius: 8px; padding: 8px;
+      align-items: center;
+    }
+    .transport-left { display: grid; grid-template-columns: 86px 86px 86px 86px 82px 120px; gap: 6px; align-items: center; }
+    .transport-right { display: grid; grid-template-columns: 1fr 68px 68px 68px; gap: 6px; align-items: center; }
+    .transport-right label { font-size: 10px; margin: 0; }
+    .stage { display: grid; gap: 6px; flex: 1 1 auto; min-height: 0; }
     .card { position: relative; background: #0f131a; border: 1px solid #263040; border-radius: 8px; overflow: hidden; }
     .card h4 { position: absolute; margin: 0; top: 6px; left: 8px; font-size: 10px; color: #c8d4e8; z-index: 1; background: rgba(10,12,16,0.75); padding: 2px 6px; border-radius: 4px; pointer-events: none; }
     canvas { display: block; }
@@ -84,9 +93,31 @@
     .scope-controls .switch-row { margin-bottom: 0; }
     details.fold { border: 1px solid #304056; border-radius: 6px; padding: 6px; margin-bottom: 8px; }
     details.fold > summary { cursor: pointer; font-size: 11px; color: #d6e2f4; font-weight: 600; }
+    .foot-row { display: grid; grid-template-columns: 1fr 80px; gap: 8px; align-items: center; }
+    .footswitch {
+      height: 32px; border-radius: 16px; border: 1px solid #3c4657;
+      background: linear-gradient(180deg, #1a1f29, #11151d);
+      color: #e8f0ff; cursor: pointer; font-size: 11px;
+    }
+    .footswitch.on { border-color: #4f6d97; background: linear-gradient(180deg, #2d4f7b, #1f3553); }
+    .help-block {
+      margin-top: 10px; border: 1px solid #32445d; border-radius: 6px; padding: 8px;
+      background: rgba(20, 32, 48, 0.55); font-size: 10px; color: #b6c9e5; line-height: 1.6;
+    }
+    .toast {
+      position: fixed; left: 312px; top: 12px; z-index: 20; width: 360px;
+      background: rgba(13, 19, 29, .96); border: 1px solid #3b536f; border-radius: 8px; padding: 10px;
+      font-size: 11px; color: #d3e3f8; box-shadow: 0 8px 20px rgba(0,0,0,.35);
+    }
+    .toast button { margin-top: 6px; }
   </style>
 </head>
 <body>
+<aside id="algoDisclaimerToast" class="toast">
+  <div><strong>说明 / Notice</strong></div>
+  <div>本页算法是教学用“简化白盒示意”，用于区分失真听感与波形特征，不是完整严谨的电路级复刻。</div>
+  <button id="closeDisclaimerToast" type="button">我知道了（关闭）</button>
+</aside>
 <div class="wrap">
   <aside class="panel">
     <h2>🎸 Distortion Visual Lab</h2>
@@ -145,17 +176,6 @@
       <input id="gainDbNum" type="number" min="-6" max="20" step="0.1" value="6" />
     </div>
 
-    <div class="switch-row">
-      <div class="switch-label-wrap">
-        <div class="switch-label">失真开关 Distortion</div>
-        <span class="hint">相当于踩下效果器踏板（On）/ 直通 Bypass（Off）</span>
-      </div>
-      <label class="switch">
-        <input id="distOn" type="checkbox" checked />
-        <span class="sw-track"></span>
-      </label>
-    </div>
-
     <div class="row">
       <label for="algo">失真类型</label>
       <span class="hint">每种类型对应不同削波电路模型，阈值根据对应硬件固定（Hard Clip 除外）</span>
@@ -179,9 +199,12 @@
       <input id="thresholdNum" type="number" min="0.1" max="1.0" step="0.01" value="0.65" />
     </div>
 
-    <div class="row">
+    <div class="row foot-row">
       <label for="drive">驱动量 Drive (dB)</label>
-      <span class="hint">圆形旋钮：更贴近单块效果器；鼠标滚轮/拖动可调</span>
+      <button id="distOnFoot" class="footswitch on" type="button">Dist ON</button>
+    </div>
+    <div class="row">
+      <span class="hint">圆形旋钮：更贴近单块效果器；鼠标滚轮/拖动可调。右侧为失真踏板开关（ON/OFF）</span>
       <div class="knob-wrap">
         <div id="driveKnob" class="knob-ui" role="button" aria-label="drive knob" tabindex="0"></div>
         <div class="knob-caption"><input id="driveNum" type="number" min="0" max="20" step="0.1" value="8" /></div>
@@ -215,14 +238,6 @@
       <input id="playbackGainDbNum" type="number" min="-24" max="0" step="0.1" value="-6" />
     </div>
 
-    <div class="btns">
-      <button id="btnRender">刷新 Render</button>
-      <button id="btnPlayIn">播放输入</button>
-    </div>
-    <div class="btns">
-      <button id="btnPlayOut">播放输出</button>
-      <button id="btnStop">停止</button>
-    </div>
 
     <div class="legend">
       🟢 绿色 = 输入信号（含 Gain）<br>
@@ -230,13 +245,60 @@
       🔵 蓝色 = 输出信号（削波后）<br>
       <span style="color:#ffb478">- - -</span> 橙虚线 = 削波阈值
     </div>
+
+    <!-- Future references / external links / citation block -->
+    <div class="help-block">
+      <strong>算法声明（长期显示）</strong><br>
+      当前算法用于教学示意：强调削波方式与听感差异，并非商业综合效果器中的完整白盒电路建模。<br>
+      后续可在此补充参考资料与外链（TS/RAT/OCD/Timmy/Fuzz 等）。
+    </div>
+    <div class="help-block">
+      <strong>削波阈值说明</strong><br>
+      阈值越低：更早进入削波、谐波更多、失真更重。<br>
+      阈值越高：保留更多原始动态、失真更轻。<br>
+      对称削波以奇次谐波为主；非对称削波会引入更多偶次谐波。
+    </div>
   </aside>
 
-  <main class="stage">
-    <div class="time-row">
-      <div class="card">
+  <main class="stage-shell">
+    <div class="transport-bar">
+      <div class="transport-left">
+        <button id="transportRender" type="button">Render</button>
+        <button id="transportPlayIn" type="button">Play In</button>
+        <button id="transportPlayOut" type="button">Play Out</button>
+        <button id="transportStop" type="button">Stop</button>
+        <label class="switch" style="margin-top:0">
+          <input id="loopEnable" type="checkbox" />
+          <span class="sw-track"></span>
+        </label>
+        <span class="hint" style="margin:0">Loop 循环 / Return To Start
+          <label class="switch" style="margin-left:6px;vertical-align:middle">
+            <input id="returnToStart" type="checkbox" checked />
+            <span class="sw-track"></span>
+          </label>
+        </span>
+      </div>
+      <div class="transport-right">
+        <div>
+          <label id="transportPosLabel" for="transportPosMs">走带位置 / Offset (ms)</label>
+          <input id="transportPosMs" type="range" min="0" max="9900" step="1" value="0" />
+        </div>
+        <input id="transportPosMsNum" type="number" min="0" max="9900" step="1" value="0" />
+        <input id="loopStartMs" type="number" min="0" max="9900" step="1" value="0" title="Loop Start ms" />
+        <input id="loopEndMs" type="number" min="1" max="10000" step="1" value="1000" title="Loop End ms" />
+      </div>
+    </div>
+    <div id="stage" class="stage">
+      <div id="timeMainCard" class="card">
         <h4>时域主窗口 · 输入（绿）vs 输出（蓝）+ 阈值虚线</h4>
         <div class="scope-controls">
+          <div class="switch-row">
+            <div class="switch-label-wrap"><div class="switch-label">窗口显示 Main</div></div>
+            <label class="switch">
+              <input id="showTimeMainUi" type="checkbox" checked />
+              <span class="sw-track"></span>
+            </label>
+          </div>
           <div class="row inline">
             <div>
               <label for="timeWindowMsUi">Time Window 时间窗口 (ms)</label>
@@ -265,12 +327,26 @@
               <span class="sw-track"></span>
             </label>
           </div>
+          <div class="switch-row">
+            <div class="switch-label-wrap"><div class="switch-label">Pre-Clip 黄线（Drive前）</div></div>
+            <label class="switch">
+              <input id="showPreClipUi" type="checkbox" checked />
+              <span class="sw-track"></span>
+            </label>
+          </div>
         </div>
         <canvas id="timeCanvas"></canvas>
       </div>
-      <div class="card">
+      <div id="timeOutCard" class="card">
         <h4>输出波形（单独显示）</h4>
         <div class="scope-controls" style="width: 220px;">
+          <div class="switch-row">
+            <div class="switch-label-wrap"><div class="switch-label">窗口显示 Output</div></div>
+            <label class="switch">
+              <input id="showTimeOutUi" type="checkbox" checked />
+              <span class="sw-track"></span>
+            </label>
+          </div>
           <div class="switch-row">
             <div class="switch-label-wrap"><div class="switch-label">Threshold 阈值线（输出窗）</div></div>
             <label class="switch">
@@ -281,10 +357,18 @@
         </div>
         <canvas id="timeOutCanvas"></canvas>
       </div>
-    </div>
-    <div class="card">
+      <div id="freqCard" class="card">
       <h4>频域 FFT · 输入 vs 输出（50Hz 起）· 绿=输入 蓝=输出</h4>
       <div class="freq-controls">
+        <div class="switch-row">
+          <div class="switch-label-wrap">
+            <div class="switch-label">窗口显示 FFT</div>
+          </div>
+          <label class="switch">
+            <input id="showFreqUi" type="checkbox" checked />
+            <span class="sw-track"></span>
+          </label>
+        </div>
         <div class="row inline">
           <div>
             <label for="fftMaxHz">FFT Max Hz 频率上限</label>
@@ -311,7 +395,7 @@
       </div>
       <canvas id="freqCanvas"></canvas>
     </div>
-    <div class="bottom-spacer" aria-hidden="true"></div>
+    </div>
   </main>
 </div>
 <script src="distortion-lab.js"></script>

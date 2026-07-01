@@ -25,13 +25,19 @@
     splitView: $("splitViewUi") || $("splitView"),
     showThreshMain: $("showThreshMainUi"),
     showThreshOut: $("showThreshOutUi"),
-    btnRender: $("btnRender"), btnPlayIn: $("btnPlayIn"),
-    btnPlayOut: $("btnPlayOut"), btnStop: $("btnStop"),
+    transportRender: $("transportRender"), transportPlayIn: $("transportPlayIn"), transportPlayOut: $("transportPlayOut"), transportStop: $("transportStop"),
+    transportPosMs: $("transportPosMs"), transportPosMsNum: $("transportPosMsNum"), transportPosLabel: $("transportPosLabel"),
+    loopEnable: $("loopEnable"), returnToStart: $("returnToStart"), loopStartMs: $("loopStartMs"), loopEndMs: $("loopEndMs"),
     timeCanvas: $("timeCanvas"), timeOutCanvas: $("timeOutCanvas"), freqCanvas: $("freqCanvas"),
+    stage: $("stage"), timeMainCard: $("timeMainCard"), timeOutCard: $("timeOutCard"), freqCard: $("freqCard"),
     threshRow: $("threshRow"), asymRow: $("asymRow"),
     fftMaxHz: $("fftMaxHz"), fftMaxHzNum: $("fftMaxHzNum"), fftLogX: $("fftLogX"),
     fftDbMin: $("fftDbMin"), fftDbMinNum: $("fftDbMinNum"),
     playbackGainDb: $("playbackGainDb"), playbackGainDbNum: $("playbackGainDbNum"),
+    showTimeMain: $("showTimeMainUi"), showTimeOut: $("showTimeOutUi"), showFreq: $("showFreqUi"),
+    showPreClip: $("showPreClipUi"),
+    distOnFoot: $("distOnFoot"),
+    closeDisclaimerToast: $("closeDisclaimerToast"), algoDisclaimerToast: $("algoDisclaimerToast"),
   };
 
   const ctxTime    = els.timeCanvas.getContext("2d");
@@ -42,6 +48,8 @@
     inputRaw: null, inputGained: null, preClip: null, output: null,
     fileBuffers: [null, null, null],
     audioCtx: null, sourceNode: null,
+    currentPlayBuffer: null,
+    currentPlayMode: null, // "in" | "out"
   };
 
   // ─── Fixed clipping thresholds modelled after real hardware ───────────────
@@ -306,7 +314,7 @@
     }
     return out;
   }
-  function play(buffer) {
+  function play(buffer, mode) {
     stopPlayback();
     const ac = ensureAudioCtx();
     const b = ac.createBuffer(1, buffer.length, sampleRate);
@@ -315,8 +323,32 @@
     for (let i = 0; i < safe.length; i++) safe[i] *= playbackLin;
     b.copyToChannel(safe, 0);
     const src = ac.createBufferSource();
-    src.buffer = b; src.connect(ac.destination); src.start();
+    src.buffer = b; src.connect(ac.destination);
+
+    const loopOn = !!els.loopEnable.checked;
+    const totalMs = Math.floor((buffer.length / sampleRate) * 1000);
+    const startMs = clamp(+els.loopStartMs.value, 0, Math.max(0, totalMs - 1));
+    const endMs = clamp(+els.loopEndMs.value, startMs + 1, totalMs);
+    const transportStartMs = clamp(+els.transportPosMs.value, 0, Math.max(0, totalMs - 1));
+    const startSec = (loopOn ? startMs : transportStartMs) / 1000;
+    const durSec = loopOn ? Math.max(0.01, (endMs - startMs) / 1000) : Math.max(0.01, (totalMs - transportStartMs) / 1000);
+
+    src.onended = () => {
+      state.sourceNode = null;
+      if (loopOn) {
+        if (els.returnToStart.checked) {
+          els.transportPosMs.value = String(startMs);
+          els.transportPosMsNum.value = String(startMs);
+          syncOffsetToTransport();
+          renderAll();
+        }
+        play(buffer, mode);
+      }
+    };
+    src.start(0, startSec, durSec);
     state.sourceNode = src;
+    state.currentPlayBuffer = buffer;
+    state.currentPlayMode = mode;
   }
   function stopPlayback() {
     if (state.sourceNode) { try { state.sourceNode.stop(); } catch(_) {} state.sourceNode.disconnect(); state.sourceNode = null; }
@@ -505,6 +537,7 @@
     drawGrid(ctxTime, fullArea, 10, 8);
     const {start, end} = getTimeWindow(Math.min(inSig.length, outSig.length));
     const windowMs = +els.timeWindowMs.value;
+    const showPre = els.showPreClip ? !!els.showPreClip.checked : true;
     const showThreshMain = els.showThreshMain ? !!els.showThreshMain.checked : true;
     if (els.splitView.checked) {
       const half = fullArea.h * 0.5;
@@ -514,17 +547,21 @@
       ctxTime.beginPath(); ctxTime.moveTo(fullArea.l, fullArea.t + half); ctxTime.lineTo(fullArea.l + fullArea.w, fullArea.t + half); ctxTime.stroke();
       if (showThreshMain) drawThreshLines(ctxTime, topArea, pos, neg, yS);
       drawWave(ctxTime, topArea, inSig,  "rgba(0,230,110,0.9)",  1.4, start,end, yS);
-      ctxTime.setLineDash([6, 4]);
-      drawWave(ctxTime, topArea, preClipSig, "rgba(235,220,90,0.9)", 1.2, start, end, yS);
-      ctxTime.setLineDash([]);
+      if (showPre) {
+        ctxTime.setLineDash([6, 4]);
+        drawWave(ctxTime, topArea, preClipSig, "rgba(235,220,90,0.9)", 1.2, start, end, yS);
+        ctxTime.setLineDash([]);
+      }
       if (showThreshMain) drawThreshLines(ctxTime, botArea, pos, neg, yS);
       drawWave(ctxTime, botArea, outSig, "rgba(90,160,255,0.9)", 1.5, start,end, yS);
     } else {
       if (showThreshMain) drawThreshLines(ctxTime, fullArea, pos, neg, yS);
       drawWave(ctxTime, fullArea, inSig,  "rgba(0,230,110,0.9)",  1.4, start,end, yS);
-      ctxTime.setLineDash([6, 4]);
-      drawWave(ctxTime, fullArea, preClipSig, "rgba(235,220,90,0.9)", 1.2, start, end, yS);
-      ctxTime.setLineDash([]);
+      if (showPre) {
+        ctxTime.setLineDash([6, 4]);
+        drawWave(ctxTime, fullArea, preClipSig, "rgba(235,220,90,0.9)", 1.2, start, end, yS);
+        ctxTime.setLineDash([]);
+      }
       drawWave(ctxTime, fullArea, outSig, "rgba(90,160,255,0.9)", 1.5, start,end, yS);
     }
     drawAxisLabelsTime(ctxTime, fullArea, windowMs, yS);
@@ -613,6 +650,70 @@
     if (rerender) renderAll();
   }
 
+  function syncDistFootSwitch() {
+    if (!els.distOnFoot) return;
+    const on = !!els.distOn.checked;
+    els.distOnFoot.textContent = on ? "Dist ON" : "Dist OFF";
+    els.distOnFoot.classList.toggle("on", on);
+  }
+
+  function syncTransportToOffset() {
+    els.transportPosMs.value = els.timeOffsetMs.value;
+    els.transportPosMsNum.value = els.timeOffsetMsNum.value;
+  }
+
+  function syncOffsetToTransport() {
+    els.timeOffsetMs.value = els.transportPosMs.value;
+    els.timeOffsetMsNum.value = els.transportPosMsNum.value;
+  }
+
+  function updateStageLayout() {
+    const showMain = !!els.showTimeMain.checked;
+    const showOut = !!els.showTimeOut.checked;
+    const showFreq = !!els.showFreq.checked;
+    const cards = [
+      { el: els.timeMainCard, on: showMain },
+      { el: els.timeOutCard, on: showOut },
+      { el: els.freqCard, on: showFreq },
+    ];
+    cards.forEach(c => { c.el.style.display = c.on ? "" : "none"; c.el.style.gridColumn = ""; c.el.style.gridRow = ""; });
+    const onCount = cards.filter(c => c.on).length;
+    if (onCount <= 1) {
+      els.stage.style.gridTemplateColumns = "1fr";
+      els.stage.style.gridTemplateRows = "1fr";
+      const first = cards.find(c => c.on) || cards[0];
+      first.el.style.display = "";
+      first.el.style.gridColumn = "1 / 2";
+      first.el.style.gridRow = "1 / 2";
+      return;
+    }
+    if (showMain && showOut && !showFreq) {
+      els.stage.style.gridTemplateColumns = "2fr 1fr";
+      els.stage.style.gridTemplateRows = "1fr";
+      els.timeMainCard.style.gridColumn = "1 / 2"; els.timeMainCard.style.gridRow = "1 / 2";
+      els.timeOutCard.style.gridColumn = "2 / 3"; els.timeOutCard.style.gridRow = "1 / 2";
+      return;
+    }
+    if (showMain && showOut && showFreq) {
+      els.stage.style.gridTemplateColumns = "2fr 1fr";
+      els.stage.style.gridTemplateRows = "0.95fr 1.1fr";
+      els.timeMainCard.style.gridColumn = "1 / 2"; els.timeMainCard.style.gridRow = "1 / 2";
+      els.timeOutCard.style.gridColumn = "2 / 3"; els.timeOutCard.style.gridRow = "1 / 2";
+      els.freqCard.style.gridColumn = "1 / 3"; els.freqCard.style.gridRow = "2 / 3";
+      return;
+    }
+    // one time + freq
+    els.stage.style.gridTemplateColumns = "1fr";
+    els.stage.style.gridTemplateRows = "1fr 1fr";
+    if (showMain) {
+      els.timeMainCard.style.gridColumn = "1 / 2"; els.timeMainCard.style.gridRow = "1 / 2";
+      els.freqCard.style.gridColumn = "1 / 2"; els.freqCard.style.gridRow = "2 / 3";
+    } else {
+      els.timeOutCard.style.gridColumn = "1 / 2"; els.timeOutCard.style.gridRow = "1 / 2";
+      els.freqCard.style.gridColumn = "1 / 2"; els.freqCard.style.gridRow = "2 / 3";
+    }
+  }
+
   async function getInputSignal() {
     const mode = getSourceMode();
     if (mode === 0) return new Float32Array(Math.floor(sampleRate * durationSec)); // no input
@@ -626,6 +727,19 @@
     try {
       let raw = await getInputSignal();
       raw = onePoleHighpass(raw, HPF_CUTOFF_HZ, sampleRate); // default 50Hz cleanup to reduce LF noise floor
+      const totalMs = Math.max(1, Math.floor((raw.length / sampleRate) * 1000));
+      const maxOffset = Math.max(0, totalMs - 1);
+      [els.timeOffsetMs, els.timeOffsetMsNum, els.transportPosMs, els.transportPosMsNum, els.loopStartMs, els.loopEndMs].forEach((el) => {
+        if (!el) return;
+        if (el.id === "loopEndMs") el.max = String(totalMs);
+        else el.max = String(maxOffset);
+      });
+      els.transportPosLabel.textContent = getSourceMode() >= 4 ? "走带位置 Transport (ms)" : "时间偏移 / Offset (ms)";
+      if (+els.transportPosMs.value > maxOffset) {
+        els.transportPosMs.value = String(maxOffset);
+        els.transportPosMsNum.value = String(maxOffset);
+        syncOffsetToTransport();
+      }
       const gain = dbToLin(FIXED_INPUT_GAIN_DB);
       const gained = new Float32Array(raw.length);
       for (let i = 0; i < raw.length; i++) gained[i] = raw[i] * gain;
@@ -701,13 +815,24 @@
     bindPair(els.threshold, els.thresholdNum);
     bindPair(els.timeWindowMs, els.timeWindowMsNum);
     bindPair(els.timeOffsetMs, els.timeOffsetMsNum);
+    bindPair(els.transportPosMs, els.transportPosMsNum);
     bindPair(els.fftMaxHz, els.fftMaxHzNum);
     bindPair(els.fftDbMin, els.fftDbMinNum);
     bindPair(els.playbackGainDb, els.playbackGainDbNum);
+    els.transportPosMs.addEventListener("input", () => { syncOffsetToTransport(); renderAll(); });
+    els.transportPosMsNum.addEventListener("input", () => { syncOffsetToTransport(); renderAll(); });
+    els.timeOffsetMs.addEventListener("input", () => { syncTransportToOffset(); });
+    els.timeOffsetMsNum.addEventListener("input", () => { syncTransportToOffset(); });
 
     els.algo.addEventListener("change", () => { updateAlgoUI(); renderAll(); });
-    [els.distOn, els.asymToggle, els.splitView, els.fftLogX, els.showThreshMain, els.showThreshOut]
-      .forEach(el => el.addEventListener("change", renderAll));
+    [els.distOn, els.asymToggle, els.splitView, els.fftLogX, els.showThreshMain, els.showThreshOut, els.showPreClip]
+      .forEach(el => el?.addEventListener("change", renderAll));
+    [els.showTimeMain, els.showTimeOut, els.showFreq].forEach(el => el?.addEventListener("change", () => { updateStageLayout(); resizeAll(); }));
+    els.distOnFoot?.addEventListener("click", () => {
+      els.distOn.checked = !els.distOn.checked;
+      syncDistFootSwitch();
+      renderAll();
+    });
     let sourceDragY = null;
     els.sourceKnob.addEventListener("mousedown", (e) => { sourceDragY = e.clientY; });
     window.addEventListener("mousemove", (e) => {
@@ -752,10 +877,21 @@
     els.snap220?.addEventListener("click", () => { els.sineFreq.value = "220"; els.sineFreqNum.value = "220"; renderAll(); });
     els.snap440?.addEventListener("click", () => { els.sineFreq.value = "440"; els.sineFreqNum.value = "440"; renderAll(); });
 
-    els.btnRender.addEventListener("click", renderAll);
-    els.btnPlayIn.addEventListener("click", () => state.inputGained && play(state.inputGained));
-    els.btnPlayOut.addEventListener("click", () => state.output && play(state.output));
-    els.btnStop.addEventListener("click", stopPlayback);
+    els.transportRender.addEventListener("click", renderAll);
+    els.transportPlayIn.addEventListener("click", () => state.inputGained && play(state.inputGained, "in"));
+    els.transportPlayOut.addEventListener("click", () => state.output && play(state.output, "out"));
+    els.transportStop.addEventListener("click", () => {
+      stopPlayback();
+      if (els.returnToStart.checked) {
+        const pos = clamp(+els.loopStartMs.value, 0, +els.transportPosMs.max || 0);
+        els.transportPosMs.value = String(pos);
+        els.transportPosMsNum.value = String(pos);
+        syncOffsetToTransport();
+        renderAll();
+      }
+    });
+    [els.loopEnable, els.returnToStart, els.loopStartMs, els.loopEndMs].forEach(el => el?.addEventListener("change", renderAll));
+    els.closeDisclaimerToast?.addEventListener("click", () => { els.algoDisclaimerToast.style.display = "none"; });
 
     const ro = new ResizeObserver(() => resizeAll());
     ro.observe(els.timeCanvas.parentElement);
@@ -771,6 +907,12 @@
     els.fftDbMinNum.value = String(FFT_DB_MIN_DEFAULT);
     setSourceMode(1, false);
     setDriveValue(+els.drive.value, false);
+    syncDistFootSwitch();
+    updateStageLayout();
+    syncTransportToOffset();
+    setTimeout(() => {
+      if (els.algoDisclaimerToast) els.algoDisclaimerToast.style.display = "none";
+    }, 3000);
     requestAnimationFrame(() => resizeAll());
   }
 
