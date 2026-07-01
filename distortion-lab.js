@@ -553,13 +553,18 @@
 
   // ─── Canvas rendering ─────────────────────────────────────────────────────
   function resizeCanvas(c) {
-    const rect = c.parentElement.getBoundingClientRect();
+    // Use canvas' own rendered size (client box), not parent border-box.
+    // This avoids feedback loops where setting px width/height changes layout,
+    // which then retriggers ResizeObserver and can cause progressive growth.
     const dpr = devicePixelRatio || 1;
-    const w = Math.floor(rect.width), h = Math.floor(rect.height);
-    if (w === 0 || h === 0) return false;
-    if (c.width === w*dpr && c.height === h*dpr) return false;
-    c.width = w*dpr; c.height = h*dpr;
-    c.style.width = w+"px"; c.style.height = h+"px";
+    const w = Math.floor(c.clientWidth);
+    const h = Math.floor(c.clientHeight);
+    if (w <= 0 || h <= 0) return false;
+    const targetW = Math.max(1, Math.floor(w * dpr));
+    const targetH = Math.max(1, Math.floor(h * dpr));
+    if (c.width === targetW && c.height === targetH) return false;
+    c.width = targetW;
+    c.height = targetH;
     c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
     return true;
   }
@@ -1040,7 +1045,16 @@
     bindFold(els.foldTimeOut,  els.timeOutCard,  true);
     bindFold(els.foldFreq,     els.freqCard,     false);
 
-    const ro = new ResizeObserver(() => resizeAll());
+    let resizeQueued = false;
+    const queueResize = () => {
+      if (resizeQueued) return;
+      resizeQueued = true;
+      requestAnimationFrame(() => {
+        resizeQueued = false;
+        resizeAll();
+      });
+    };
+    const ro = new ResizeObserver(queueResize);
     ro.observe(els.stage);
   }
 
