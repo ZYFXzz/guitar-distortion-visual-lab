@@ -9,201 +9,201 @@
     * { box-sizing: border-box; }
     body { margin: 0; font-family: system-ui, sans-serif; background: #101215; color: #eef1f6; overflow: hidden; }
 
-    /* ── outer grid: sidebar | canvas area ── */
     .wrap { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
 
-    /* ── sidebar ── */
     .panel { padding: 14px; border-right: 1px solid #2b313a; background: #151922; overflow-y: auto; }
-    .panel h2 { margin: 0 0 10px; font-size: 17px; }
-    .panel h3 { margin: 14px 0 5px; font-size: 12px; color: #9cb6d8; text-transform: uppercase; letter-spacing: .04em; }
-    .row { margin-bottom: 7px; }
-    label { display: block; font-size: 11px; color: #cfd8e3; margin-bottom: 3px; }
-    input, select, button { width: 100%; padding: 6px 8px; border: 1px solid #3c4657; border-radius: 5px; background: #1f2531; color: #edf2fb; font-size: 12px; }
+    .panel h2 { margin: 0 0 4px; font-size: 16px; }
+    .panel h3 { margin: 12px 0 4px; font-size: 11px; color: #9cb6d8; text-transform: uppercase; letter-spacing: .05em; }
+    .row { margin-bottom: 6px; }
+    label { display: block; font-size: 11px; color: #cfd8e3; margin-bottom: 2px; font-weight: 600; }
+    .hint { display: block; font-size: 10px; color: #7a95b5; margin: 1px 0 3px; line-height: 1.4; }
+    input, select, button { width: 100%; padding: 5px 7px; border: 1px solid #3c4657; border-radius: 5px; background: #1f2531; color: #edf2fb; font-size: 11px; }
     input[type="range"] { padding: 0; }
-    .inline { display: grid; grid-template-columns: 1fr 64px; gap: 6px; align-items: center; }
-    .inline input[type="number"] { width: 64px; }
-    .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+    .inline { display: grid; grid-template-columns: 1fr 58px; gap: 5px; align-items: center; }
+    .inline input[type="number"] { width: 58px; }
+    .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 6px; }
     button { cursor: pointer; background: #274065; }
     button:hover { background: #345687; }
-    .legend { font-size: 11px; color: #9eb1cc; margin-top: 8px; line-height: 1.6; }
+    .legend { font-size: 10px; color: #9eb1cc; margin-top: 8px; line-height: 1.7; }
+    .tag { display: inline-block; font-size: 9px; padding: 1px 5px; border-radius: 3px; background: #243448; color: #7bb3e0; margin-left: 4px; vertical-align: middle; }
 
-    /* ── toggle switch ── */
-    .switch-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; }
-    .switch-label { font-size: 11px; color: #cfd8e3; }
-    .switch { position: relative; display: inline-block; width: 42px; height: 22px; flex: 0 0 auto; }
+    /* toggle */
+    .switch-row { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 6px; gap: 6px; }
+    .switch-label-wrap { flex: 1; }
+    .switch-label { font-size: 11px; color: #cfd8e3; font-weight: 600; }
+    .switch { position: relative; display: inline-block; width: 40px; height: 20px; flex: 0 0 auto; margin-top: 2px; }
     .switch input { opacity: 0; width: 0; height: 0; }
-    .sw-track {
-      position: absolute; cursor: pointer; inset: 0;
-      background: #2f3a4c; border: 1px solid #3c4657;
-      border-radius: 999px; transition: .2s;
-    }
-    .sw-track::before {
-      content: ""; position: absolute;
-      width: 16px; height: 16px; left: 2px; top: 2px;
-      background: #dce8ff; border-radius: 50%; transition: .2s;
-    }
+    .sw-track { position: absolute; cursor: pointer; inset: 0; background: #2f3a4c; border: 1px solid #3c4657; border-radius: 999px; transition: .2s; }
+    .sw-track::before { content: ""; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px; background: #dce8ff; border-radius: 50%; transition: .2s; }
     .switch input:checked + .sw-track { background: #345687; }
     .switch input:checked + .sw-track::before { transform: translateX(20px); }
 
-    /* ── canvas stage ── */
-    .stage {
-      display: grid;
-      grid-template-rows: 45% 55%;   /* time-row top, freq bottom */
-      gap: 6px; padding: 6px;
-      height: 100vh;
-    }
-    /* time row: main 2/3 | output 1/3 */
-    .time-row {
-      display: grid;
-      grid-template-columns: 2fr 1fr;
-      gap: 6px;
-    }
+    /* stage */
+    .stage { display: grid; grid-template-rows: 44% 56%; gap: 6px; padding: 6px; height: 100vh; }
+    .time-row { display: grid; grid-template-columns: 2fr 1fr; gap: 6px; }
     .card { position: relative; background: #0f131a; border: 1px solid #263040; border-radius: 8px; overflow: hidden; }
-    .card h4 {
-      position: absolute; margin: 0; top: 6px; left: 8px;
-      font-size: 11px; color: #c8d4e8; z-index: 1;
-      background: rgba(10,12,16,0.7); padding: 2px 6px; border-radius: 4px;
-    }
-    canvas { display: block; }   /* sized by JS via ResizeObserver */
+    .card h4 { position: absolute; margin: 0; top: 6px; left: 8px; font-size: 10px; color: #c8d4e8; z-index: 1; background: rgba(10,12,16,0.75); padding: 2px 6px; border-radius: 4px; pointer-events: none; }
+    canvas { display: block; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <aside class="panel">
-      <h2>🎸 Distortion Visual Lab</h2>
+<div class="wrap">
+  <aside class="panel">
+    <h2>🎸 Distortion Visual Lab</h2>
+    <span class="hint" style="margin:0 0 2px">吉他失真底层原理可视化 · 波形 + 频谱实时演示</span>
 
-      <h3>输入源</h3>
-      <div class="row">
-        <label for="sourceType">Source Type</label>
-        <select id="sourceType">
-          <option value="sine">Sine Wave</option>
-          <option value="guitar_chord">Guitar Chord (sample)</option>
-          <option value="guitar_single">Guitar Single Pick (sample)</option>
-        </select>
+    <h3>输入源</h3>
+    <div class="row">
+      <label for="sourceType">信号源类型</label>
+      <span class="hint">选择进入失真电路的原始信号</span>
+      <select id="sourceType">
+        <option value="sine">正弦波（纯净单频）</option>
+        <option value="guitar_chord">吉他和弦（合成示例）</option>
+        <option value="guitar_single">吉他单音拨弦（合成示例）</option>
+      </select>
+    </div>
+    <div class="row inline">
+      <div>
+        <label for="sineFreq">正弦波频率 (Hz)</label>
+        <span class="hint">类比：吉他某弦的基频，如 E2=82Hz、A2=110Hz</span>
+        <input id="sineFreq" type="range" min="80" max="1200" step="1" value="220" />
       </div>
-      <div class="row inline">
-        <div>
-          <label for="sineFreq">Sine Freq (Hz)</label>
-          <input id="sineFreq" type="range" min="80" max="1200" step="1" value="220" />
-        </div>
-        <input id="sineFreqNum" type="number" min="80" max="1200" step="1" value="220" />
-      </div>
-      <div class="row">
-        <label for="inputFileChord">Guitar Chord Audio (optional file)</label>
-        <input id="inputFileChord" type="file" accept="audio/*" />
-      </div>
-      <div class="row">
-        <label for="inputFileSingle">Guitar Single Audio (optional file)</label>
-        <input id="inputFileSingle" type="file" accept="audio/*" />
-      </div>
+      <input id="sineFreqNum" type="number" min="80" max="1200" step="1" value="220" />
+    </div>
+    <div class="row">
+      <label for="inputFileChord">上传和弦音频（可选）</label>
+      <input id="inputFileChord" type="file" accept="audio/*" />
+    </div>
+    <div class="row">
+      <label for="inputFileSingle">上传单音音频（可选）</label>
+      <input id="inputFileSingle" type="file" accept="audio/*" />
+    </div>
 
-      <h3>增益与失真</h3>
-      <div class="row inline">
-        <div>
-          <label for="gainDb">Input Gain (dB)</label>
-          <input id="gainDb" type="range" min="-6" max="20" step="0.1" value="6" />
-        </div>
-        <input id="gainDbNum" type="number" min="-6" max="20" step="0.1" value="6" />
+    <h3>增益与失真</h3>
+    <div class="row inline">
+      <div>
+        <label for="gainDb">输入增益 Input Gain (dB)</label>
+        <span class="hint">相当于效果器的 <strong>Input Level</strong> 旋钮，控制进入削波级前的信号大小。拨弦力度越大 = 增益越高</span>
+        <input id="gainDb" type="range" min="-6" max="20" step="0.1" value="6" />
       </div>
-      <div class="switch-row">
-        <span class="switch-label">Distortion On/Off</span>
-        <label class="switch">
-          <input id="distOn" type="checkbox" checked />
-          <span class="sw-track"></span>
-        </label>
-      </div>
-      <div class="row">
-        <label for="algo">Algorithm</label>
-        <select id="algo">
-          <option value="hardclip">Hard Clip</option>
-          <option value="softclip">Soft Clip (tanh)</option>
-          <option value="distortion">Distortion (atan)</option>
-          <option value="overdrive">Overdrive (soft knee)</option>
-          <option value="mosfet">MOSFET-like asym soft/hard</option>
-          <option value="fuzz">Fuzz</option>
-          <option value="rectifier">Rectifier</option>
-        </select>
-      </div>
-      <div class="row inline">
-        <div>
-          <label for="threshold">Clip Threshold</label>
-          <input id="threshold" type="range" min="0.1" max="1.0" step="0.01" value="0.6" />
-        </div>
-        <input id="thresholdNum" type="number" min="0.1" max="1.0" step="0.01" value="0.6" />
-      </div>
-      <div class="row inline">
-        <div>
-          <label for="drive">Drive (algorithm intensity)</label>
-          <input id="drive" type="range" min="0" max="20" step="0.1" value="8" />
-        </div>
-        <input id="driveNum" type="number" min="0" max="20" step="0.1" value="8" />
-      </div>
-      <div class="switch-row">
-        <span class="switch-label">Asymmetric Clip（只削正半波）</span>
-        <label class="switch">
-          <input id="asymToggle" type="checkbox" />
-          <span class="sw-track"></span>
-        </label>
-      </div>
+      <input id="gainDbNum" type="number" min="-6" max="20" step="0.1" value="6" />
+    </div>
 
-      <h3>示波器视图</h3>
-      <div class="row inline">
-        <div>
-          <label for="timeWindowMs">Time Window (ms)</label>
-          <input id="timeWindowMs" type="range" min="5" max="200" step="1" value="40" />
-        </div>
-        <input id="timeWindowMsNum" type="number" min="5" max="200" step="1" value="40" />
+    <div class="switch-row">
+      <div class="switch-label-wrap">
+        <div class="switch-label">失真开关 Distortion</div>
+        <span class="hint">相当于踩下效果器踏板（On）/ 直通 Bypass（Off）</span>
       </div>
-      <div class="row inline">
-        <div>
-          <label for="timeOffsetMs">Time Offset (ms)</label>
-          <input id="timeOffsetMs" type="range" min="0" max="1900" step="1" value="0" />
-        </div>
-        <input id="timeOffsetMsNum" type="number" min="0" max="1900" step="1" value="0" />
-      </div>
-      <div class="switch-row">
-        <span class="switch-label">Split View（输入/输出分层）</span>
-        <label class="switch">
-          <input id="splitView" type="checkbox" />
-          <span class="sw-track"></span>
-        </label>
-      </div>
+      <label class="switch">
+        <input id="distOn" type="checkbox" checked />
+        <span class="sw-track"></span>
+      </label>
+    </div>
 
-      <div class="btns">
-        <button id="btnRender">Render</button>
-        <button id="btnPlayIn">Play Input</button>
-      </div>
-      <div class="btns">
-        <button id="btnPlayOut">Play Output</button>
-        <button id="btnStop">Stop</button>
-      </div>
+    <div class="row">
+      <label for="algo">失真类型</label>
+      <span class="hint">每种类型对应不同削波电路模型，阈值根据对应硬件固定（Hard Clip 除外）</span>
+      <select id="algo">
+        <option value="hardclip">Hard Clip · 数字硬削波（阈值可调）</option>
+        <option value="overdrive">Overdrive · TS-808 / SD-1 / BD-2 软过载</option>
+        <option value="distortion">Distortion · Pro Co RAT / DS-1 硬失真</option>
+        <option value="mosfet">MOSFET OD · Fulltone OCD 不对称过载</option>
+        <option value="fuzz">Fuzz · Fuzz Face / Big Muff 模糊失真</option>
+        <option value="rectifier">Rectifier · Mesa Boogie Dual Rectifier 整流失真</option>
+        <option value="timmy">Transparent OD · Timmy 透明过载（单侧削波）</option>
+      </select>
+    </div>
 
-      <div class="legend">
-        颜色：<br>
-        绿色 = 输入（含 Gain）<br>
-        蓝色 = 输出（失真后）<br>
-        虚线 = ±削波阈值（含 asymmetric）<br>
+    <div id="threshRow" class="row inline">
+      <div>
+        <label for="threshold">削波阈值 Clip Threshold</label>
+        <span class="hint">波形幅度超过此值时开始被削平。仅 Hard Clip 可调；其他类型根据对应效果器的二极管前向电压固定</span>
+        <input id="threshold" type="range" min="0.1" max="1.0" step="0.01" value="0.65" />
       </div>
-    </aside>
+      <input id="thresholdNum" type="number" min="0.1" max="1.0" step="0.01" value="0.65" />
+    </div>
 
-    <main class="stage">
-      <div class="time-row">
-        <div class="card">
-          <h4>时域：输入（绿）vs 输出（蓝）</h4>
-          <canvas id="timeCanvas"></canvas>
-        </div>
-        <div class="card">
-          <h4>输出波形</h4>
-          <canvas id="timeOutCanvas"></canvas>
-        </div>
+    <div class="row inline">
+      <div>
+        <label for="drive">驱动量 Drive (dB)</label>
+        <span class="hint">相当于效果器的 <strong>Gain / Drive</strong> 旋钮，控制削波级内部放大倍数。Drive 越高 = 信号越容易超出阈值 = 失真量越大</span>
+        <input id="drive" type="range" min="0" max="20" step="0.1" value="8" />
+      </div>
+      <input id="driveNum" type="number" min="0" max="20" step="0.1" value="8" />
+    </div>
+
+    <div id="asymRow" class="switch-row">
+      <div class="switch-label-wrap">
+        <div class="switch-label">非对称削波 Asymmetric</div>
+        <span class="hint">仅 Hard Clip 有效。正半波保持设定阈值，负半波不削波，产生偶次谐波，音色更"暖"</span>
+      </div>
+      <label class="switch">
+        <input id="asymToggle" type="checkbox" />
+        <span class="sw-track"></span>
+      </label>
+    </div>
+
+    <h3>示波器视图</h3>
+    <div class="row inline">
+      <div>
+        <label for="timeWindowMs">时间窗口 Time Window (ms)</label>
+        <span class="hint">示波器横轴缩放。调短可看清高频波形细节（如 5ms 可看约 2 个 220Hz 周期）</span>
+        <input id="timeWindowMs" type="range" min="5" max="200" step="1" value="40" />
+      </div>
+      <input id="timeWindowMsNum" type="number" min="5" max="200" step="1" value="40" />
+    </div>
+    <div class="row inline">
+      <div>
+        <label for="timeOffsetMs">时间偏移 Offset (ms)</label>
+        <span class="hint">从第几毫秒开始显示，用于平移查看不同波形区间</span>
+        <input id="timeOffsetMs" type="range" min="0" max="1900" step="1" value="0" />
+      </div>
+      <input id="timeOffsetMsNum" type="number" min="0" max="1900" step="1" value="0" />
+    </div>
+    <div class="switch-row">
+      <div class="switch-label-wrap">
+        <div class="switch-label">分层显示 Split View</div>
+        <span class="hint">将输入（绿）和输出（蓝）上下分开显示，便于对比波形形状变化</span>
+      </div>
+      <label class="switch">
+        <input id="splitView" type="checkbox" />
+        <span class="sw-track"></span>
+      </label>
+    </div>
+
+    <div class="btns">
+      <button id="btnRender">刷新 Render</button>
+      <button id="btnPlayIn">播放输入</button>
+    </div>
+    <div class="btns">
+      <button id="btnPlayOut">播放输出</button>
+      <button id="btnStop">停止</button>
+    </div>
+
+    <div class="legend">
+      🟢 绿色 = 输入信号（含 Gain）<br>
+      🔵 蓝色 = 输出信号（削波后）<br>
+      <span style="color:#ffb478">- - -</span> 橙虚线 = 削波阈值
+    </div>
+  </aside>
+
+  <main class="stage">
+    <div class="time-row">
+      <div class="card">
+        <h4>时域主窗口 · 输入（绿）vs 输出（蓝）+ 阈值虚线</h4>
+        <canvas id="timeCanvas"></canvas>
       </div>
       <div class="card">
-        <h4>频域：输入 vs 输出（FFT 幅频，0–5 kHz）</h4>
-        <canvas id="freqCanvas"></canvas>
+        <h4>输出波形（单独显示）</h4>
+        <canvas id="timeOutCanvas"></canvas>
       </div>
-    </main>
-  </div>
-
-  <script src="distortion-lab.js"></script>
+    </div>
+    <div class="card">
+      <h4>频域 FFT · 输入 vs 输出（0–5 kHz）· 绿=输入 蓝=输出</h4>
+      <canvas id="freqCanvas"></canvas>
+    </div>
+  </main>
+</div>
+<script src="distortion-lab.js"></script>
 </body>
 </html>
