@@ -629,13 +629,11 @@
     if (rerender) renderAll();
   }
 
-  function updateSourceKnobUI() {
-    const raw = clamp(parseFloat(els.sourceKnobIdx.value) || 0, 0, 6);
-    const nearest = Math.round(raw);
-    const snapped = Math.abs(raw - nearest) < 0.22 ? nearest : raw; // detent attraction
-    if (snapped !== raw) els.sourceKnobIdx.value = String(snapped);
-    const idx = getSourceMode();
-    const deg = -130 + snapped * (260 / 6);
+  // displayVal: continuous value during drag (no snap); omit to use stored integer
+  function updateSourceKnobUI(displayVal) {
+    const raw = (displayVal !== undefined) ? clamp(displayVal, 0, 6) : clamp(parseFloat(els.sourceKnobIdx.value) || 0, 0, 6);
+    const idx = Math.round(raw);
+    const deg = -130 + raw * (260 / 6);
     els.sourceKnob.style.transform = `rotate(${deg}deg)`;
     els.sourceKnobLabel.textContent = SOURCE_LABELS[idx] || SOURCE_LABELS[0];
   }
@@ -834,15 +832,26 @@
       renderAll();
     });
     let sourceDragY = null;
-    els.sourceKnob.addEventListener("mousedown", (e) => { sourceDragY = e.clientY; });
+    let sourceRawAccum = 1; // continuous drag accumulator (avoids snap-on-every-move bug)
+    els.sourceKnob.addEventListener("mousedown", (e) => {
+      sourceDragY = e.clientY;
+      sourceRawAccum = clamp(parseFloat(els.sourceKnobIdx.value) || 1, 0, 6);
+      e.preventDefault();
+    });
     window.addEventListener("mousemove", (e) => {
       if (sourceDragY === null) return;
       const dy = sourceDragY - e.clientY;
       sourceDragY = e.clientY;
-      const v = (parseFloat(els.sourceKnobIdx.value) || 0) + dy * 0.03;
-      setSourceMode(v);
+      sourceRawAccum = clamp(sourceRawAccum + dy * 0.12, 0, 6);
+      updateSourceKnobUI(sourceRawAccum); // visual only, no snap, no rerender
     });
-    window.addEventListener("mouseup", () => { sourceDragY = null; });
+    window.addEventListener("mouseup", () => {
+      if (sourceDragY === null) return;
+      sourceDragY = null;
+      const snapped = Math.round(sourceRawAccum);
+      sourceRawAccum = snapped;
+      setSourceMode(snapped); // snap + rerender
+    });
     els.sourceKnob.addEventListener("keydown", (e) => {
       if (e.key === "ArrowRight" || e.key === "ArrowUp") {
         setSourceMode(getSourceMode() + 1);
@@ -851,7 +860,12 @@
         setSourceMode(getSourceMode() - 1);
       }
     });
-    els.sourceKnob.addEventListener("wheel", (e) => { e.preventDefault(); setSourceMode((parseFloat(els.sourceKnobIdx.value) || 0) + (e.deltaY > 0 ? -0.35 : 0.35)); }, { passive: false });
+    els.sourceKnob.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const step = e.deltaY > 0 ? -1 : 1;
+      sourceRawAccum = clamp(Math.round(sourceRawAccum) + step, 0, 6);
+      setSourceMode(sourceRawAccum);
+    }, { passive: false });
     els.sourceKnobIdx.addEventListener("input", () => { updateSourceKnobUI(); renderAll(); });
 
     // Drive circular knob interactions
