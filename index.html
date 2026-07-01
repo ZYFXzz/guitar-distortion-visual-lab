@@ -39,11 +39,20 @@
     .switch input:checked + .sw-track::before { transform: translateX(20px); }
 
     /* stage */
-    .stage { display: grid; grid-template-rows: 44% 56%; gap: 6px; padding: 6px; height: 100vh; }
+    .stage { display: grid; grid-template-rows: 40% 48% 12%; gap: 6px; padding: 6px; height: 100vh; }
     .time-row { display: grid; grid-template-columns: 2fr 1fr; gap: 6px; }
     .card { position: relative; background: #0f131a; border: 1px solid #263040; border-radius: 8px; overflow: hidden; }
     .card h4 { position: absolute; margin: 0; top: 6px; left: 8px; font-size: 10px; color: #c8d4e8; z-index: 1; background: rgba(10,12,16,0.75); padding: 2px 6px; border-radius: 4px; pointer-events: none; }
     canvas { display: block; }
+    .bottom-spacer { background: transparent; }
+
+    .tri-switch { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 2px; }
+    .tri-switch input { display: none; }
+    .tri-switch label {
+      display: block; text-align: center; font-size: 10px; padding: 4px 2px;
+      border: 1px solid #3c4657; border-radius: 5px; background: #1f2531; color: #cfd8e3; cursor: pointer;
+    }
+    .tri-switch input:checked + label { background: #345687; color: #f3f8ff; border-color: #4f6d97; }
   </style>
 </head>
 <body>
@@ -80,10 +89,10 @@
     </div>
 
     <h3>增益与失真</h3>
-    <div class="row inline">
+    <div id="gainRow" class="row inline" style="display:none;">
       <div>
         <label for="gainDb">输入增益 Input Gain (dB)</label>
-        <span class="hint">相当于效果器的 <strong>Input Level</strong> 旋钮，控制进入削波级前的信号大小。拨弦力度越大 = 增益越高</span>
+        <span class="hint">当前演示固定 0 dB（隐藏）。保留此模块是为了后续推子/前级模型扩展</span>
         <input id="gainDb" type="range" min="-6" max="20" step="0.1" value="6" />
       </div>
       <input id="gainDbNum" type="number" min="-6" max="20" step="0.1" value="6" />
@@ -171,6 +180,25 @@
       </label>
     </div>
 
+    <div class="row">
+      <label>FFT 质量档位（含抗混叠）</label>
+      <span class="hint">3 档开关：Eco / Balanced / Detail（影响 FFT 长度、hop 和非线性阶段抗混叠强度）</span>
+      <div class="tri-switch">
+        <div>
+          <input id="fftModeEco" type="radio" name="fftMode" value="eco" />
+          <label for="fftModeEco">ECO</label>
+        </div>
+        <div>
+          <input id="fftModeBalanced" type="radio" name="fftMode" value="balanced" checked />
+          <label for="fftModeBalanced">BAL</label>
+        </div>
+        <div>
+          <input id="fftModeDetail" type="radio" name="fftMode" value="detail" />
+          <label for="fftModeDetail">DETAIL</label>
+        </div>
+      </div>
+    </div>
+
     <div class="btns">
       <button id="btnRender">刷新 Render</button>
       <button id="btnPlayIn">播放输入</button>
@@ -202,6 +230,7 @@
       <h4>频域 FFT · 输入 vs 输出（0–5 kHz）· 绿=输入 蓝=输出</h4>
       <canvas id="freqCanvas"></canvas>
     </div>
+    <div class="bottom-spacer" aria-hidden="true"></div>
   </main>
 </div>
 <script src="distortion-lab.js"></script>

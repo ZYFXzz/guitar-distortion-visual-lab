@@ -1,13 +1,16 @@
 (() => {
   const sampleRate = 44100;
   const durationSec = 2.0;
-  const fftSize = 2048;
+  const FIXED_INPUT_GAIN_DB = 0;
+  const FFT_VIEW_MAX_HZ = 5000;
+  const FFT_DB_MIN = -110;
+  const FFT_DB_MAX = 10;
 
   const $ = (id) => document.getElementById(id);
   const els = {
     sourceType: $("sourceType"), sineFreq: $("sineFreq"), sineFreqNum: $("sineFreqNum"),
     inputFileChord: $("inputFileChord"), inputFileSingle: $("inputFileSingle"),
-    gainDb: $("gainDb"), gainDbNum: $("gainDbNum"),
+    gainDb: $("gainDb"), gainDbNum: $("gainDbNum"), gainRow: $("gainRow"),
     distOn: $("distOn"), algo: $("algo"),
     threshold: $("threshold"), thresholdNum: $("thresholdNum"),
     drive: $("drive"), driveNum: $("driveNum"),
@@ -19,6 +22,7 @@
     btnPlayOut: $("btnPlayOut"), btnStop: $("btnStop"),
     timeCanvas: $("timeCanvas"), timeOutCanvas: $("timeOutCanvas"), freqCanvas: $("freqCanvas"),
     threshRow: $("threshRow"), asymRow: $("asymRow"),
+    fftModeEco: $("fftModeEco"), fftModeBalanced: $("fftModeBalanced"), fftModeDetail: $("fftModeDetail"),
   };
 
   const ctxTime    = els.timeCanvas.getContext("2d");
@@ -76,6 +80,20 @@
   // ─── Helpers ──────────────────────────────────────────────────────────────
   function dbToLin(db) { return Math.pow(10, db / 20); }
   function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+  function linToDb(x) { return 20 * Math.log10(Math.max(1e-9, x)); }
+
+  function getFftMode() {
+    if (els.fftModeEco?.checked) return "eco";
+    if (els.fftModeDetail?.checked) return "detail";
+    return "balanced";
+  }
+
+  function getFftConfig() {
+    const mode = getFftMode();
+    if (mode === "eco") return { fftLen: 1024, hop: 512, oversample: 1 };
+    if (mode === "detail") return { fftLen: 4096, hop: 2048, oversample: 4 };
+    return { fftLen: 2048, hop: 1024, oversample: 2 };
+  }
 
   function getThresholds(algo, userTh, asymOn) {
     if (algo === "hardclip") {
@@ -122,6 +140,39 @@
       }
       out[i] = env * s;
     }
+    return out;
+  }
+
+  function upsampleLinear(input, factor) {
+    if (factor <= 1) return input.slice();
+    const outLen = input.length * factor;
+    const out = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const p = i / factor;
+      const a = Math.floor(p);
+      const b = Math.min(a + 1, input.length - 1);
+      const t = p - a;
+      const va = input[Math.min(a, input.length - 1)] || 0;
+      const vb = input[b] || 0;
+      out[i] = va + (vb - va) * t;
+    }
+    return out;
+  }
+
+  function onePoleLowpass(signal, cutoffHz, sr) {
+    const out = new Float32Array(signal.length);
+    const dt = 1 / sr;
+    const rc = 1 / (2 * Math.PI * cutoffHz);
+    const alpha = dt / (rc + dt);
+    out[0] = signal[0] || 0;
+    for (let i = 1; i < signal.length; i++) out[i] = out[i - 1] + alpha * (signal[i] - out[i - 1]);
+    return out;
+  }
+
+  function downsample(signal, factor, outLen) {
+    if (factor <= 1) return signal.slice(0, outLen);
+    const out = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) out[i] = signal[Math.min(i * factor, signal.length - 1)] || 0;
     return out;
   }
 
@@ -207,6 +258,19 @@
     return { output: y, pos, neg };
   }
 
+  function processDistortionWithAA(input, cfg, oversample) {
+    if (oversample <= 1) return applyDistortion(input, cfg);
+    const up = upsampleLinear(input, oversample);
+    const highCfg = { ...cfg };
+    const high = applyDistortion(up, highCfg);
+    // Anti-aliasing: low-pass before decimation (kept below base Nyquist)
+    const cutoff = sampleRate * 0.45;
+    let filtered = onePoleLowpass(high.output, cutoff, sampleRate * oversample);
+    filtered = onePoleLowpass(filtered, cutoff, sampleRate * oversample);
+    const down = downsample(filtered, oversample, input.length);
+    return { output: down, pos: high.pos, neg: high.neg };
+  }
+
   // ─── Audio playback ───────────────────────────────────────────────────────
   function ensureAudioCtx() {
     if (!state.audioCtx) state.audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
@@ -262,10 +326,10 @@
   }
 
   // ─── FFT ──────────────────────────────────────────────────────────────────
-  function fftMag(signal, n = fftSize) {
+  function fftMagFrame(signal, n, offset) {
     const re = new Float32Array(n), im = new Float32Array(n), win = new Float32Array(n);
-    for (let i = 0; i < n; i++) win[i] = 0.5 - 0.5 * Math.cos(2*Math.PI*i/(n-1));
-    for (let i = 0; i < n; i++) re[i] = (signal[i] || 0) * win[i];
+    for (let i = 0; i < n; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1));
+    for (let i = 0; i < n; i++) re[i] = (signal[offset + i] || 0) * win[i];
     let j = 0;
     for (let i = 1; i < n; i++) {
       let bit = n >> 1;
@@ -284,9 +348,24 @@
         }
       }
     }
-    const half = n>>1, mag = new Float32Array(half);
-    for (let i = 0; i < half; i++) mag[i] = Math.sqrt(re[i]*re[i]+im[i]*im[i])/half;
+    const half = n >> 1, mag = new Float32Array(half);
+    for (let i = 0; i < half; i++) mag[i] = Math.sqrt(re[i] * re[i] + im[i] * im[i]) / half;
     return mag;
+  }
+
+  function fftMagAveraged(signal, n, hop) {
+    const half = n >> 1;
+    const acc = new Float32Array(half);
+    let frames = 0;
+    for (let off = 0; off + n <= signal.length; off += hop) {
+      const m = fftMagFrame(signal, n, off);
+      for (let i = 0; i < half; i++) acc[i] += m[i];
+      frames++;
+      if (frames >= 16) break; // cap for UI responsiveness
+    }
+    if (frames === 0) return fftMagFrame(signal, n, 0);
+    for (let i = 0; i < half; i++) acc[i] /= frames;
+    return acc;
   }
 
   // ─── Canvas rendering ─────────────────────────────────────────────────────
@@ -306,18 +385,22 @@
     renderAll();
   }
 
-  function drawGrid(ctx, w, h) {
-    ctx.clearRect(0,0,w,h);
-    ctx.fillStyle = "#0f131a"; ctx.fillRect(0,0,w,h);
-    ctx.strokeStyle = "#1a2230"; ctx.lineWidth = 1;
-    for (let i = 1; i < 10; i++) {
-      const x = w*i/10, y = h*i/10;
-      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+  function drawGrid(ctx, area, xDiv = 10, yDiv = 8) {
+    ctx.clearRect(0, 0, ctx.canvas.clientWidth, ctx.canvas.clientHeight);
+    ctx.fillStyle = "#0f131a";
+    ctx.fillRect(0, 0, ctx.canvas.clientWidth, ctx.canvas.clientHeight);
+    ctx.strokeStyle = "#1a2230";
+    ctx.lineWidth = 1;
+    for (let i = 1; i < xDiv; i++) {
+      const x = area.l + (area.w * i) / xDiv;
+      ctx.beginPath(); ctx.moveTo(x, area.t); ctx.lineTo(x, area.t + area.h); ctx.stroke();
     }
-    // zero line
-    ctx.strokeStyle = "#2a3a50"; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
+    for (let i = 1; i < yDiv; i++) {
+      const y = area.t + (area.h * i) / yDiv;
+      ctx.beginPath(); ctx.moveTo(area.l, y); ctx.lineTo(area.l + area.w, y); ctx.stroke();
+    }
+    ctx.strokeStyle = "#2b3b52";
+    ctx.beginPath(); ctx.rect(area.l, area.t, area.w, area.h); ctx.stroke();
   }
 
   function getTimeWindow(totalSamples) {
@@ -327,72 +410,115 @@
     return { start, end: Math.min(totalSamples, start+samplesToShow) };
   }
 
-  function drawThreshLines(ctx, w, segH, yOff, pos, neg, yScale) {
-    const toY = v => yOff + segH*0.5*(1-v/yScale);
+  function drawThreshLines(ctx, area, pos, neg, yScale) {
+    const toY = v => area.t + area.h * 0.5 * (1 - v / yScale);
     ctx.setLineDash([7,5]); ctx.strokeStyle = "rgba(255,180,100,0.85)"; ctx.lineWidth = 1.2;
-    if (pos <= yScale) { ctx.beginPath(); ctx.moveTo(0,toY(pos)); ctx.lineTo(w,toY(pos)); ctx.stroke(); }
-    if (neg <= yScale) { ctx.beginPath(); ctx.moveTo(0,toY(-neg)); ctx.lineTo(w,toY(-neg)); ctx.stroke(); }
+    if (pos <= yScale) { ctx.beginPath(); ctx.moveTo(area.l,toY(pos)); ctx.lineTo(area.l + area.w,toY(pos)); ctx.stroke(); }
+    if (neg <= yScale) { ctx.beginPath(); ctx.moveTo(area.l,toY(-neg)); ctx.lineTo(area.l + area.w,toY(-neg)); ctx.stroke(); }
     ctx.setLineDash([]);
   }
 
-  function drawWave(ctx, sig, color, lw, start, end, yOff, segH, yScale) {
-    const w = ctx.canvas.clientWidth, len = Math.max(1, end-start);
+  function drawWave(ctx, area, sig, color, lw, start, end, yScale) {
+    const len = Math.max(1, end - start);
     ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.beginPath();
     for (let i = 0; i < len; i++) {
-      const x = (i/(len-1||1))*w;
-      const y = yOff + segH*0.5*(1-sig[start+i]/yScale);
+      const x = area.l + (i / (len - 1 || 1)) * area.w;
+      const y = area.t + area.h * 0.5 * (1 - sig[start + i] / yScale);
       i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
     }
     ctx.stroke();
   }
 
+  function drawAxisLabelsTime(ctx, area, windowMs, yScale) {
+    ctx.fillStyle = "#9eb1cc";
+    ctx.font = "10px system-ui, sans-serif";
+    ctx.fillText("Voltage (norm)", 6, area.t + 10);
+    ctx.fillText("Time (ms)", area.l + area.w - 48, area.t + area.h + 24);
+    ctx.fillText(`+${yScale.toFixed(1)}`, area.l - 32, area.t + 4);
+    ctx.fillText("0", area.l - 16, area.t + area.h * 0.5 + 3);
+    ctx.fillText(`-${yScale.toFixed(1)}`, area.l - 34, area.t + area.h - 2);
+    for (let i = 0; i <= 4; i++) {
+      const x = area.l + (area.w * i) / 4;
+      const t = (windowMs * i) / 4;
+      ctx.fillText(`${t.toFixed(0)}`, x - 7, area.t + area.h + 14);
+    }
+  }
+
+  function drawAxisLabelsFreq(ctx, area) {
+    ctx.fillStyle = "#9eb1cc";
+    ctx.font = "10px system-ui, sans-serif";
+    ctx.fillText("Magnitude (dBFS)", 6, area.t + 10);
+    ctx.fillText("Frequency (Hz)", area.l + area.w - 66, area.t + area.h + 24);
+    const yTicks = [-100, -80, -60, -40, -20, 0];
+    for (const t of yTicks) {
+      const y = area.t + area.h * (1 - (t - FFT_DB_MIN) / (FFT_DB_MAX - FFT_DB_MIN));
+      ctx.fillText(`${t}`, area.l - 30, y + 3);
+    }
+    const xTicks = [0, 1000, 2000, 3000, 4000, 5000];
+    for (const f of xTicks) {
+      const x = area.l + area.w * (f / FFT_VIEW_MAX_HZ);
+      ctx.fillText(`${f}`, x - 10, area.t + area.h + 14);
+    }
+  }
+
   function drawTime(inSig, outSig, pos, neg) {
     const w = els.timeCanvas.clientWidth, h = els.timeCanvas.clientHeight;
     const yS = 2.0;
-    drawGrid(ctxTime, w, h);
+    const fullArea = { l: 52, t: 26, w: Math.max(10, w - 68), h: Math.max(10, h - 58) };
+    drawGrid(ctxTime, fullArea, 10, 8);
     const {start, end} = getTimeWindow(Math.min(inSig.length, outSig.length));
+    const windowMs = +els.timeWindowMs.value;
     if (els.splitView.checked) {
-      const half = h*0.5;
+      const half = fullArea.h * 0.5;
+      const topArea = { l: fullArea.l, t: fullArea.t, w: fullArea.w, h: half };
+      const botArea = { l: fullArea.l, t: fullArea.t + half, w: fullArea.w, h: half };
       ctxTime.strokeStyle = "rgba(100,120,150,0.4)"; ctxTime.lineWidth=1;
-      ctxTime.beginPath(); ctxTime.moveTo(0,half); ctxTime.lineTo(w,half); ctxTime.stroke();
-      drawThreshLines(ctxTime, w, half, 0, pos, neg, yS);
-      drawWave(ctxTime, inSig,  "rgba(0,230,110,0.9)",  1.4, start,end, 0,    half, yS);
-      drawThreshLines(ctxTime, w, half, half, pos, neg, yS);
-      drawWave(ctxTime, outSig, "rgba(90,160,255,0.9)", 1.5, start,end, half, half, yS);
+      ctxTime.beginPath(); ctxTime.moveTo(fullArea.l, fullArea.t + half); ctxTime.lineTo(fullArea.l + fullArea.w, fullArea.t + half); ctxTime.stroke();
+      drawThreshLines(ctxTime, topArea, pos, neg, yS);
+      drawWave(ctxTime, topArea, inSig,  "rgba(0,230,110,0.9)",  1.4, start,end, yS);
+      drawThreshLines(ctxTime, botArea, pos, neg, yS);
+      drawWave(ctxTime, botArea, outSig, "rgba(90,160,255,0.9)", 1.5, start,end, yS);
     } else {
-      drawThreshLines(ctxTime, w, h, 0, pos, neg, yS);
-      drawWave(ctxTime, inSig,  "rgba(0,230,110,0.9)",  1.4, start,end, 0, h, yS);
-      drawWave(ctxTime, outSig, "rgba(90,160,255,0.9)", 1.5, start,end, 0, h, yS);
+      drawThreshLines(ctxTime, fullArea, pos, neg, yS);
+      drawWave(ctxTime, fullArea, inSig,  "rgba(0,230,110,0.9)",  1.4, start,end, yS);
+      drawWave(ctxTime, fullArea, outSig, "rgba(90,160,255,0.9)", 1.5, start,end, yS);
     }
+    drawAxisLabelsTime(ctxTime, fullArea, windowMs, yS);
   }
 
   function drawTimeOut(outSig, pos, neg) {
     const w = els.timeOutCanvas.clientWidth, h = els.timeOutCanvas.clientHeight;
     const yS = 2.0;
-    drawGrid(ctxTimeOut, w, h);
+    const area = { l: 52, t: 26, w: Math.max(10, w - 68), h: Math.max(10, h - 58) };
+    drawGrid(ctxTimeOut, area, 8, 8);
     const {start, end} = getTimeWindow(outSig.length);
-    drawThreshLines(ctxTimeOut, w, h, 0, pos, neg, yS);
-    drawWave(ctxTimeOut, outSig, "rgba(90,160,255,0.9)", 1.7, start,end, 0, h, yS);
+    drawThreshLines(ctxTimeOut, area, pos, neg, yS);
+    drawWave(ctxTimeOut, area, outSig, "rgba(90,160,255,0.9)", 1.7, start,end, yS);
+    drawAxisLabelsTime(ctxTimeOut, area, +els.timeWindowMs.value, yS);
   }
 
   function drawFreq(inSig, outSig) {
     const w = els.freqCanvas.clientWidth, h = els.freqCanvas.clientHeight;
-    drawGrid(ctxFreq, w, h);
-    const inMag = fftMag(inSig), outMag = fftMag(outSig);
-    const maxBins = Math.floor((5000/(sampleRate/2))*inMag.length);
-    let maxV = 1e-9;
-    for (let i = 0; i < maxBins; i++) maxV = Math.max(maxV, inMag[i], outMag[i]);
-    const toY = v => h - (v/maxV)*(h-16);
+    const area = { l: 56, t: 26, w: Math.max(10, w - 76), h: Math.max(10, h - 60) };
+    drawGrid(ctxFreq, area, 10, 8);
+    const cfg = getFftConfig();
+    const inMag = fftMagAveraged(inSig, cfg.fftLen, cfg.hop);
+    const outMag = fftMagAveraged(outSig, cfg.fftLen, cfg.hop);
+    const maxBins = Math.floor((FFT_VIEW_MAX_HZ / (sampleRate / 2)) * inMag.length);
+    const toY = db => area.t + area.h * (1 - (db - FFT_DB_MIN) / (FFT_DB_MAX - FFT_DB_MIN));
     const drawMag = (mag, color) => {
       ctxFreq.strokeStyle = color; ctxFreq.lineWidth = 1.5; ctxFreq.beginPath();
       for (let i = 0; i < maxBins; i++) {
-        const x = (i/(maxBins-1))*w, y = toY(mag[i]);
+        const freq = (i / (mag.length - 1)) * (sampleRate / 2);
+        const x = area.l + area.w * (freq / FFT_VIEW_MAX_HZ);
+        const y = toY(clamp(linToDb(mag[i]), FFT_DB_MIN, FFT_DB_MAX));
         i===0 ? ctxFreq.moveTo(x,y) : ctxFreq.lineTo(x,y);
       }
       ctxFreq.stroke();
     };
     drawMag(inMag,  "rgba(0,230,110,0.9)");
     drawMag(outMag, "rgba(90,160,255,0.9)");
+    drawAxisLabelsFreq(ctxFreq, area);
   }
 
   // ─── Render pipeline ──────────────────────────────────────────────────────
@@ -405,15 +531,18 @@
 
   async function renderAll() {
     const raw = await getInputSignal();
-    const gain = dbToLin(+els.gainDb.value);
+    const gain = dbToLin(FIXED_INPUT_GAIN_DB);
     const gained = new Float32Array(raw.length);
     for (let i = 0; i < raw.length; i++) gained[i] = raw[i] * gain;
+    els.gainDb.value = FIXED_INPUT_GAIN_DB;
+    els.gainDbNum.value = FIXED_INPUT_GAIN_DB;
     const cfg = {
       distOn: els.distOn.checked, algo: els.algo.value,
       threshold: +els.threshold.value, driveDb: +els.drive.value,
       asymOn: els.asymToggle.checked,
     };
-    const { output, pos, neg } = applyDistortion(gained, cfg);
+    const fftCfg = getFftConfig();
+    const { output, pos, neg } = processDistortionWithAA(gained, cfg, fftCfg.oversample);
     state.inputRaw=raw; state.inputGained=gained; state.output=output;
     drawTime(gained, output, pos, neg);
     drawTimeOut(output, pos, neg);
@@ -445,7 +574,6 @@
 
   function bindEvents() {
     bindPair(els.sineFreq, els.sineFreqNum);
-    bindPair(els.gainDb, els.gainDbNum);
     bindPair(els.threshold, els.thresholdNum);
     bindPair(els.drive, els.driveNum);
     bindPair(els.timeWindowMs, els.timeWindowMsNum);
@@ -454,6 +582,8 @@
     els.algo.addEventListener("change", () => { updateAlgoUI(); renderAll(); });
     [els.sourceType, els.distOn, els.asymToggle, els.splitView]
       .forEach(el => el.addEventListener("change", renderAll));
+    [els.fftModeEco, els.fftModeBalanced, els.fftModeDetail]
+      .forEach(el => el?.addEventListener("change", renderAll));
 
     els.btnRender.addEventListener("click", renderAll);
     els.btnPlayIn.addEventListener("click", () => state.inputGained && play(state.inputGained));
