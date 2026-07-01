@@ -62,6 +62,15 @@
     .transport-vol details summary::-webkit-details-marker { display: none; }
     .transport-vol .vol-inner { position: absolute; right: 0; top: 100%; margin-top: 3px; background: #151922; border: 1px solid #263040; border-radius: 6px; padding: 6px 8px; display: flex; gap: 6px; align-items: center; z-index: 10; white-space: nowrap; min-width: 200px; }
     .transport-vol { position: relative; flex: 0 0 auto; }
+    .transport-ab { position: relative; flex: 0 0 auto; }
+    .transport-ab .ab-inner {
+      position: absolute; right: 0; top: 100%; margin-top: 3px;
+      background: #151922; border: 1px solid #263040; border-radius: 6px; padding: 6px 8px;
+      z-index: 10; min-width: 250px;
+    }
+    .transport-ab .ab-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 4px; }
+    .transport-ab .ab-grid button { width: 100%; padding: 4px 6px; font-size: 10px; }
+    .transport-ab .ab-status { margin-top: 6px; font-size: 10px; color: #9eb1cc; }
     /* transport wave row */
     .transport-wave-row {
       display: flex; align-items: center; gap: 6px; flex: 0 0 32px;
@@ -340,6 +349,28 @@
           <span class="hint">循环时长(ms)</span>
           <input id="loopDurationMs" type="range" min="500" max="10000" step="100" value="1000" />
           <input id="loopDurationMsNum" type="number" min="500" max="10000" step="100" value="1000" />
+          <label class="switch" style="margin-top:0; flex:0 0 auto">
+            <input id="autoLevelMatch" type="checkbox" checked />
+            <span class="sw-track"></span>
+          </label>
+          <span class="hint">Auto Level Match</span>
+        </div>
+        <div class="transport-sep"></div>
+        <!-- Snapshot A/B in fold panel -->
+        <div class="transport-ab">
+          <details>
+            <summary>🧪 A/B 快照</summary>
+            <div class="ab-inner">
+              <span class="hint" style="margin:0">保存/召回参数（不改输入源与文件槽位）</span>
+              <div class="ab-grid">
+                <button id="snapSaveA" type="button">保存 A</button>
+                <button id="snapLoadA" type="button">调用 A</button>
+                <button id="snapSaveB" type="button">保存 B</button>
+                <button id="snapLoadB" type="button">调用 B</button>
+              </div>
+              <div id="abStatus" class="ab-status">A: 空 | B: 空</div>
+            </div>
+          </details>
         </div>
         <div class="transport-sep"></div>
         <!-- Playback volume in a floating details -->

@@ -29,6 +29,8 @@
     transportPosMs: $("transportPosMs"), transportPosMsNum: $("transportPosMsNum"), transportPosLabel: $("transportPosLabel"),
     loopEnable: $("loopEnable"), returnToStart: $("returnToStart"),
     loopDurationMs: $("loopDurationMs"), loopDurationMsNum: $("loopDurationMsNum"),
+    autoLevelMatch: $("autoLevelMatch"),
+    snapSaveA: $("snapSaveA"), snapLoadA: $("snapLoadA"), snapSaveB: $("snapSaveB"), snapLoadB: $("snapLoadB"), abStatus: $("abStatus"),
     transportCanvas: $("transportCanvas"),
     timeCanvas: $("timeCanvas"), timeOutCanvas: $("timeOutCanvas"), freqCanvas: $("freqCanvas"),
     stage: $("stage"), timeMainCard: $("timeMainCard"), timeOutCard: $("timeOutCard"), freqCard: $("freqCard"),
@@ -50,13 +52,15 @@
   const state = {
     inputRaw: null, inputGained: null, preClip: null, output: null,
     fileBuffers: [null, null, null],
-    audioCtx: null, sourceNode: null,
+    audioCtx: null, sourceNode: null, sourceGainNode: null, masterGain: null,
     currentPlayBuffer: null,
     currentPlayMode: null, // "in" | "out"
     stopRequested: false,
     isPlaying: false,
+    playToken: 0,
     playStartAcTime: null,   // AudioContext.currentTime when current segment started
     playStartOffsetSec: null, // buffer offset (seconds) when current segment started
+    snapshots: { A: null, B: null },
   };
 
   // ─── Fixed clipping thresholds modelled after real hardware ───────────────
@@ -300,7 +304,12 @@
 
   // ─── Audio playback ───────────────────────────────────────────────────────
   function ensureAudioCtx() {
-    if (!state.audioCtx) state.audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+    if (!state.audioCtx) {
+      state.audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+      state.masterGain = state.audioCtx.createGain();
+      state.masterGain.gain.value = 1.0;
+      state.masterGain.connect(state.audioCtx.destination);
+    }
     return state.audioCtx;
   }
   function normalizeForPlayback(x) {
@@ -311,16 +320,54 @@
     for (let i = 0; i < x.length; i++) out[i] = x[i] * g;
     return out;
   }
+  function rms(signal, start = 0, end = signal.length) {
+    const s = Math.max(0, Math.floor(start));
+    const e = Math.min(signal.length, Math.max(s + 1, Math.floor(end)));
+    let sum = 0;
+    for (let i = s; i < e; i++) sum += signal[i] * signal[i];
+    return Math.sqrt(sum / Math.max(1, e - s));
+  }
+
+  function getOutputLevelMatchGain(startSample, endSample) {
+    if (!els.autoLevelMatch?.checked) return 1.0;
+    if (!state.inputGained || !state.output) return 1.0;
+    const inRms = rms(state.inputGained, startSample, endSample);
+    const outRms = rms(state.output, startSample, endSample);
+    if (outRms <= 1e-7) return 1.0;
+    // Keep correction bounded to avoid pumping or huge jumps.
+    return clamp(inRms / outRms, 0.25, 4.0); // -12dB to +12dB
+  }
+
+  function fadeStopCurrent(ac, fadeSec = 0.03) {
+    const src = state.sourceNode;
+    const g = state.sourceGainNode;
+    if (!src || !g) return;
+    const now = ac.currentTime;
+    try {
+      g.gain.cancelScheduledValues(now);
+      g.gain.setValueAtTime(Math.max(0, g.gain.value), now);
+      g.gain.linearRampToValueAtTime(0.0, now + fadeSec);
+      src.stop(now + fadeSec + 0.005);
+    } catch (_) {}
+    setTimeout(() => {
+      try { src.disconnect(); } catch (_) {}
+      try { g.disconnect(); } catch (_) {}
+    }, Math.ceil((fadeSec + 0.02) * 1000));
+  }
+
   // (applyFadeInOut removed – fade is now applied inline in play())
   function play(buffer, mode) {
-    stopPlayback(); // sets stopRequested = true, clears sourceNode
-    state.stopRequested = false; // now we're starting fresh
+    const ac = ensureAudioCtx();
+    if (ac.state === "suspended") ac.resume();
+
+    const token = ++state.playToken; // newest transport command wins
+    state.stopRequested = false;
     state.isPlaying = true;
     state.currentPlayBuffer = buffer;
     state.currentPlayMode = mode;
 
-    const ac = ensureAudioCtx();
-    if (ac.state === "suspended") ac.resume();
+    // If another stream is active, fade it out and replace with new one.
+    fadeStopCurrent(ac, 0.03);
 
     const playbackLin = dbToLin(+els.playbackGainDb.value);
     const totalMs = Math.floor((buffer.length / sampleRate) * 1000);
@@ -351,32 +398,47 @@
       normalized[i] *= g;
       normalized[normalized.length - 1 - i] *= g;
     }
-    for (let i = 0; i < normalized.length; i++) normalized[i] *= playbackLin;
+
+    let finalGain = playbackLin;
+    if (mode === "out" && els.autoLevelMatch?.checked) {
+      finalGain *= getOutputLevelMatchGain(startSample, endSample);
+    }
+    for (let i = 0; i < normalized.length; i++) normalized[i] *= finalGain;
 
     const ab = ac.createBuffer(1, normalized.length, sampleRate);
     ab.copyToChannel(normalized, 0);
     const src = ac.createBufferSource();
+    const srcGain = ac.createGain();
     src.buffer = ab;
-    src.connect(ac.destination);
+    src.connect(srcGain);
+    srcGain.connect(state.masterGain);
 
-    state.playStartAcTime    = ac.currentTime;
+    // Fade in new source so replacement sounds smooth.
+    const now = ac.currentTime;
+    srcGain.gain.setValueAtTime(0, now);
+    srcGain.gain.linearRampToValueAtTime(1, now + 0.03);
+
+    state.playStartAcTime    = now;
     state.playStartOffsetSec = startMs / 1000;
+    state.sourceNode = src;
+    state.sourceGainNode = srcGain;
 
     src.onended = () => {
+      if (token !== state.playToken) return; // superseded by newer command
       state.sourceNode = null;
+      state.sourceGainNode = null;
       if (state.stopRequested) {
-        // Explicit stop – do not loop, optionally return to start
         state.isPlaying = false;
         if (els.returnToStart.checked) {
           els.transportPosMs.value    = String(transportMs);
           els.transportPosMsNum.value = String(transportMs);
           syncOffsetToTransport();
         }
-        drawTransportWave(); // refresh marker
+        drawTransportWave();
         return;
       }
       if (loopOn) {
-        play(buffer, mode); // seamless loop
+        play(buffer, mode); // seamless loop with same region
       } else {
         state.isPlaying = false;
         if (els.returnToStart.checked) {
@@ -389,19 +451,19 @@
       }
     };
 
-    src.start(0);
-    state.sourceNode = src;
+    src.start(now);
     tickPlayhead(); // start playhead animation
   }
 
   function stopPlayback() {
+    const ac = state.audioCtx;
     state.stopRequested = true;
-    state.isPlaying     = false;
-    if (state.sourceNode) {
-      try { state.sourceNode.stop(); } catch (_) {}
-      state.sourceNode.disconnect();
-      state.sourceNode = null;
-    }
+    state.isPlaying = false;
+    state.playToken += 1; // cancel pending callbacks from old playback
+    if (!ac) return;
+    fadeStopCurrent(ac, 0.04);
+    state.sourceNode = null;
+    state.sourceGainNode = null;
   }
 
   // ── Mini transport waveform ────────────────────────────────────────────────
@@ -799,6 +861,69 @@
     els.timeOffsetMsNum.value = els.transportPosMsNum.value;
   }
 
+  function captureSnapshot() {
+    // Intentionally does NOT capture source mode / files to allow quick A/B
+    // under different input sources.
+    return {
+      algo: els.algo.value,
+      distOn: !!els.distOn.checked,
+      threshold: +els.threshold.value,
+      drive: +els.drive.value,
+      asym: !!els.asymToggle.checked,
+      splitView: !!els.splitView.checked,
+      showThreshMain: !!els.showThreshMain.checked,
+      showThreshOut: !!els.showThreshOut.checked,
+      showPreClip: !!els.showPreClip.checked,
+      timeWindowMs: +els.timeWindowMs.value,
+      fftMaxHz: +els.fftMaxHz.value,
+      fftDbMin: +els.fftDbMin.value,
+      fftLogX: !!els.fftLogX.checked,
+      loopEnable: !!els.loopEnable.checked,
+      returnToStart: !!els.returnToStart.checked,
+      loopDurationMs: +els.loopDurationMs.value,
+      autoLevelMatch: !!els.autoLevelMatch.checked,
+      playbackGainDb: +els.playbackGainDb.value,
+    };
+  }
+
+  function applySnapshot(s) {
+    if (!s) return;
+    els.algo.value = s.algo;
+    els.distOn.checked = !!s.distOn;
+    els.threshold.value = String(s.threshold);
+    els.thresholdNum.value = String(s.threshold);
+    setDriveValue(+s.drive, false);
+    els.asymToggle.checked = !!s.asym;
+    els.splitView.checked = !!s.splitView;
+    els.showThreshMain.checked = !!s.showThreshMain;
+    els.showThreshOut.checked = !!s.showThreshOut;
+    els.showPreClip.checked = !!s.showPreClip;
+    els.timeWindowMs.value = String(s.timeWindowMs);
+    els.timeWindowMsNum.value = String(s.timeWindowMs);
+    els.fftMaxHz.value = String(s.fftMaxHz);
+    els.fftMaxHzNum.value = String(s.fftMaxHz);
+    els.fftDbMin.value = String(s.fftDbMin);
+    els.fftDbMinNum.value = String(s.fftDbMin);
+    els.fftLogX.checked = !!s.fftLogX;
+    els.loopEnable.checked = !!s.loopEnable;
+    els.returnToStart.checked = !!s.returnToStart;
+    els.loopDurationMs.value = String(s.loopDurationMs);
+    els.loopDurationMsNum.value = String(s.loopDurationMs);
+    els.autoLevelMatch.checked = !!s.autoLevelMatch;
+    els.playbackGainDb.value = String(s.playbackGainDb);
+    els.playbackGainDbNum.value = String(s.playbackGainDb);
+    updateAlgoUI();
+    syncDistFootSwitch();
+    renderAll();
+  }
+
+  function updateAbStatus(activeKey = null) {
+    const a = state.snapshots.A ? "已保存" : "空";
+    const b = state.snapshots.B ? "已保存" : "空";
+    const active = activeKey ? ` | 当前: ${activeKey}` : "";
+    if (els.abStatus) els.abStatus.textContent = `A: ${a} | B: ${b}${active}`;
+  }
+
   function updateStageLayout() {
     const mainFolded = els.timeMainCard.classList.contains("folded");
     const outFolded  = els.timeOutCard.classList.contains("folded");
@@ -1016,6 +1141,7 @@
       stopPlayback();
       drawTransportWave();
     });
+    els.autoLevelMatch?.addEventListener("change", () => { /* playback-only option */ });
     [els.loopEnable, els.returnToStart].forEach(el => el?.addEventListener("change", () => { renderAll(); drawTransportWave(); }));
     // Loop duration: redraw transport overview when changed
     if (els.loopDurationMs) {
@@ -1025,6 +1151,26 @@
     // Transport position: sync with offset + redraw transport wave
     els.transportPosMs.addEventListener("input", () => { syncOffsetToTransport(); renderAll(); drawTransportWave(); });
     els.transportPosMsNum.addEventListener("input", () => { syncOffsetToTransport(); renderAll(); drawTransportWave(); });
+
+    // ── Snapshot A/B ────────────────────────────────────────────────────────
+    els.snapSaveA?.addEventListener("click", () => {
+      state.snapshots.A = captureSnapshot();
+      updateAbStatus("A");
+    });
+    els.snapLoadA?.addEventListener("click", () => {
+      if (!state.snapshots.A) return;
+      applySnapshot(state.snapshots.A);
+      updateAbStatus("A");
+    });
+    els.snapSaveB?.addEventListener("click", () => {
+      state.snapshots.B = captureSnapshot();
+      updateAbStatus("B");
+    });
+    els.snapLoadB?.addEventListener("click", () => {
+      if (!state.snapshots.B) return;
+      applySnapshot(state.snapshots.B);
+      updateAbStatus("B");
+    });
 
     els.closeDisclaimerToast?.addEventListener("click", () => { els.algoDisclaimerToast.style.display = "none"; });
 
@@ -1067,6 +1213,7 @@
     setSourceMode(1, false);
     setDriveValue(+els.drive.value, false);
     syncDistFootSwitch();
+    updateAbStatus();
     updateStageLayout();
     syncTransportToOffset();
     setTimeout(() => {
