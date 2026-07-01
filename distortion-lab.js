@@ -52,12 +52,25 @@
     return state.audioCtx;
   }
 
-  function setSize() {
-    for (const c of [els.timeCanvas, els.timeOutCanvas, els.freqCanvas]) {
-      c.width = c.clientWidth * devicePixelRatio;
-      c.height = c.clientHeight * devicePixelRatio;
-      c.getContext("2d").setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-    }
+  function resizeCanvas(c) {
+    const rect = c.parentElement.getBoundingClientRect();
+    const dpr = devicePixelRatio || 1;
+    const w = Math.floor(rect.width);
+    const h = Math.floor(rect.height);
+    if (w === 0 || h === 0) return false;
+    if (c.width === w * dpr && c.height === h * dpr) return false;
+    c.width = w * dpr;
+    c.height = h * dpr;
+    c.style.width = w + "px";
+    c.style.height = h + "px";
+    c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
+    return true;
+  }
+
+  function resizeAll() {
+    resizeCanvas(els.timeCanvas);
+    resizeCanvas(els.timeOutCanvas);
+    resizeCanvas(els.freqCanvas);
     renderAll();
   }
 
@@ -460,14 +473,20 @@
     els.btnPlayIn.addEventListener("click", () => state.inputGained && play(state.inputGained));
     els.btnPlayOut.addEventListener("click", () => state.output && play(state.output));
     els.btnStop.addEventListener("click", stopPlayback);
-    window.addEventListener("resize", setSize);
+
+    const ro = new ResizeObserver(() => resizeAll());
+    ro.observe(els.timeCanvas.parentElement);
+    ro.observe(els.timeOutCanvas.parentElement);
+    ro.observe(els.freqCanvas.parentElement);
   }
 
   async function boot() {
     bindEvents();
     await initFileHandlers();
-    setSize();
-    renderAll();
+    // defer until layout is painted so clientWidth/Height are real
+    requestAnimationFrame(() => {
+      resizeAll();
+    });
   }
 
   boot();
