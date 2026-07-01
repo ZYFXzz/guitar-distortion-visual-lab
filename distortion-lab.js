@@ -25,19 +25,22 @@
     splitView: $("splitViewUi") || $("splitView"),
     showThreshMain: $("showThreshMainUi"),
     showThreshOut: $("showThreshOutUi"),
-    transportRender: $("transportRender"), transportPlayIn: $("transportPlayIn"), transportPlayOut: $("transportPlayOut"), transportStop: $("transportStop"),
+    transportPlayIn: $("transportPlayIn"), transportPlayOut: $("transportPlayOut"), transportStop: $("transportStop"),
     transportPosMs: $("transportPosMs"), transportPosMsNum: $("transportPosMsNum"), transportPosLabel: $("transportPosLabel"),
-    loopEnable: $("loopEnable"), returnToStart: $("returnToStart"), loopStartMs: $("loopStartMs"), loopEndMs: $("loopEndMs"),
+    loopEnable: $("loopEnable"), returnToStart: $("returnToStart"),
+    loopDurationMs: $("loopDurationMs"), loopDurationMsNum: $("loopDurationMsNum"),
+    transportCanvas: $("transportCanvas"),
     timeCanvas: $("timeCanvas"), timeOutCanvas: $("timeOutCanvas"), freqCanvas: $("freqCanvas"),
     stage: $("stage"), timeMainCard: $("timeMainCard"), timeOutCard: $("timeOutCard"), freqCard: $("freqCard"),
+    timeRow: $("timeRow"),
     threshRow: $("threshRow"), asymRow: $("asymRow"),
     fftMaxHz: $("fftMaxHz"), fftMaxHzNum: $("fftMaxHzNum"), fftLogX: $("fftLogX"),
     fftDbMin: $("fftDbMin"), fftDbMinNum: $("fftDbMinNum"),
     playbackGainDb: $("playbackGainDb"), playbackGainDbNum: $("playbackGainDbNum"),
-    showTimeMain: $("showTimeMainUi"), showTimeOut: $("showTimeOutUi"), showFreq: $("showFreqUi"),
     showPreClip: $("showPreClipUi"),
     distOnFoot: $("distOnFoot"),
     closeDisclaimerToast: $("closeDisclaimerToast"), algoDisclaimerToast: $("algoDisclaimerToast"),
+    foldTimeMain: $("foldTimeMain"), foldTimeOut: $("foldTimeOut"), foldFreq: $("foldFreq"),
   };
 
   const ctxTime    = els.timeCanvas.getContext("2d");
@@ -50,6 +53,10 @@
     audioCtx: null, sourceNode: null,
     currentPlayBuffer: null,
     currentPlayMode: null, // "in" | "out"
+    stopRequested: false,
+    isPlaying: false,
+    playStartAcTime: null,   // AudioContext.currentTime when current segment started
+    playStartOffsetSec: null, // buffer offset (seconds) when current segment started
   };
 
   // ─── Fixed clipping thresholds modelled after real hardware ───────────────
@@ -304,54 +311,167 @@
     for (let i = 0; i < x.length; i++) out[i] = x[i] * g;
     return out;
   }
-  function applyFadeInOut(buffer, sr) {
-    const out = buffer.slice();
-    const fadeSamples = Math.min(Math.floor(out.length / 8), Math.max(64, Math.floor(sr * 0.01))); // ~10ms
+  // (applyFadeInOut removed – fade is now applied inline in play())
+  function play(buffer, mode) {
+    stopPlayback(); // sets stopRequested = true, clears sourceNode
+    state.stopRequested = false; // now we're starting fresh
+    state.isPlaying = true;
+    state.currentPlayBuffer = buffer;
+    state.currentPlayMode = mode;
+
+    const ac = ensureAudioCtx();
+    if (ac.state === "suspended") ac.resume();
+
+    const playbackLin = dbToLin(+els.playbackGainDb.value);
+    const totalMs = Math.floor((buffer.length / sampleRate) * 1000);
+    const loopOn = !!els.loopEnable.checked;
+
+    // ── Calculate play region ────────────────────────────────────────────────
+    const transportMs = clamp(+els.transportPosMs.value, 0, Math.max(0, totalMs - 1));
+    let startMs, endMs;
+    if (loopOn) {
+      startMs = transportMs;
+      const durMs = Math.max(500, +els.loopDurationMs.value);
+      endMs = Math.min(totalMs, startMs + durMs);
+      if (endMs - startMs < 50) endMs = Math.min(totalMs, startMs + 50);
+    } else {
+      startMs = transportMs;
+      endMs = totalMs;
+    }
+
+    const startSample = Math.floor(startMs / 1000 * sampleRate);
+    const endSample   = Math.min(buffer.length, Math.ceil(endMs / 1000 * sampleRate));
+    const sliceLen    = Math.max(1, endSample - startSample);
+
+    // ── Extract slice with fade in/out to prevent pops ───────────────────────
+    const fadeSamples = Math.min(Math.floor(sliceLen / 8), Math.max(64, Math.floor(sampleRate * 0.01))); // ≈10ms
+    const normalized  = normalizeForPlayback(buffer.slice(startSample, endSample));
     for (let i = 0; i < fadeSamples; i++) {
       const g = i / fadeSamples;
-      out[i] *= g;
-      out[out.length - 1 - i] *= g;
+      normalized[i] *= g;
+      normalized[normalized.length - 1 - i] *= g;
     }
-    return out;
-  }
-  function play(buffer, mode) {
-    stopPlayback();
-    const ac = ensureAudioCtx();
-    const b = ac.createBuffer(1, buffer.length, sampleRate);
-    const playbackLin = dbToLin(+els.playbackGainDb.value);
-    const safe = applyFadeInOut(normalizeForPlayback(buffer), sampleRate);
-    for (let i = 0; i < safe.length; i++) safe[i] *= playbackLin;
-    b.copyToChannel(safe, 0);
-    const src = ac.createBufferSource();
-    src.buffer = b; src.connect(ac.destination);
+    for (let i = 0; i < normalized.length; i++) normalized[i] *= playbackLin;
 
-    const loopOn = !!els.loopEnable.checked;
-    const totalMs = Math.floor((buffer.length / sampleRate) * 1000);
-    const startMs = clamp(+els.loopStartMs.value, 0, Math.max(0, totalMs - 1));
-    const endMs = clamp(+els.loopEndMs.value, startMs + 1, totalMs);
-    const transportStartMs = clamp(+els.transportPosMs.value, 0, Math.max(0, totalMs - 1));
-    const startSec = (loopOn ? startMs : transportStartMs) / 1000;
-    const durSec = loopOn ? Math.max(0.01, (endMs - startMs) / 1000) : Math.max(0.01, (totalMs - transportStartMs) / 1000);
+    const ab = ac.createBuffer(1, normalized.length, sampleRate);
+    ab.copyToChannel(normalized, 0);
+    const src = ac.createBufferSource();
+    src.buffer = ab;
+    src.connect(ac.destination);
+
+    state.playStartAcTime    = ac.currentTime;
+    state.playStartOffsetSec = startMs / 1000;
 
     src.onended = () => {
       state.sourceNode = null;
-      if (loopOn) {
+      if (state.stopRequested) {
+        // Explicit stop – do not loop, optionally return to start
+        state.isPlaying = false;
         if (els.returnToStart.checked) {
-          els.transportPosMs.value = String(startMs);
-          els.transportPosMsNum.value = String(startMs);
+          els.transportPosMs.value    = String(transportMs);
+          els.transportPosMsNum.value = String(transportMs);
+          syncOffsetToTransport();
+        }
+        drawTransportWave(); // refresh marker
+        return;
+      }
+      if (loopOn) {
+        play(buffer, mode); // seamless loop
+      } else {
+        state.isPlaying = false;
+        if (els.returnToStart.checked) {
+          els.transportPosMs.value    = String(transportMs);
+          els.transportPosMsNum.value = String(transportMs);
           syncOffsetToTransport();
           renderAll();
         }
-        play(buffer, mode);
+        drawTransportWave();
       }
     };
-    src.start(0, startSec, durSec);
+
+    src.start(0);
     state.sourceNode = src;
-    state.currentPlayBuffer = buffer;
-    state.currentPlayMode = mode;
+    tickPlayhead(); // start playhead animation
   }
+
   function stopPlayback() {
-    if (state.sourceNode) { try { state.sourceNode.stop(); } catch(_) {} state.sourceNode.disconnect(); state.sourceNode = null; }
+    state.stopRequested = true;
+    state.isPlaying     = false;
+    if (state.sourceNode) {
+      try { state.sourceNode.stop(); } catch (_) {}
+      state.sourceNode.disconnect();
+      state.sourceNode = null;
+    }
+  }
+
+  // ── Mini transport waveform ────────────────────────────────────────────────
+  function drawTransportWave(playheadMs) {
+    const c = els.transportCanvas;
+    if (!c) return;
+    const dpr  = devicePixelRatio || 1;
+    const rect = c.getBoundingClientRect();
+    const cw   = Math.max(1, Math.floor(rect.width));
+    const ch   = Math.max(1, Math.floor(rect.height));
+    if (c.width !== cw * dpr || c.height !== ch * dpr) {
+      c.width = cw * dpr; c.height = ch * dpr;
+      c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    const ctx = c.getContext("2d");
+    const W = cw, H = ch;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#0a0e14";
+    ctx.fillRect(0, 0, W, H);
+
+    const buf = (state.currentPlayMode === "out" ? state.output : null) || state.output || state.inputGained;
+    if (!buf || buf.length === 0) return;
+
+    const totalMs = (buf.length / sampleRate) * 1000;
+    const msToX   = ms => (ms / totalMs) * W;
+
+    // Loop region shading
+    if (els.loopEnable.checked) {
+      const ls  = clamp(+els.transportPosMs.value, 0, totalMs);
+      const dur = Math.max(500, +els.loopDurationMs.value);
+      const le  = Math.min(totalMs, ls + dur);
+      ctx.fillStyle = "rgba(255,160,50,0.13)";
+      ctx.fillRect(msToX(ls), 0, msToX(le) - msToX(ls), H);
+      ctx.strokeStyle = "rgba(255,160,50,0.5)";
+      ctx.lineWidth = 1;
+      [ls, le].forEach(ms => { ctx.beginPath(); ctx.moveTo(msToX(ms), 0); ctx.lineTo(msToX(ms), H); ctx.stroke(); });
+    }
+
+    // Waveform overview (downsampled, peak-hold per pixel)
+    ctx.strokeStyle = "rgba(0,210,110,0.55)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const step = buf.length / W;
+    for (let px = 0; px < W; px++) {
+      const si = Math.floor(px * step);
+      const y  = H * 0.5 * (1 - (buf[Math.min(si, buf.length - 1)] || 0) * 0.82);
+      px === 0 ? ctx.moveTo(px, y) : ctx.lineTo(px, y);
+    }
+    ctx.stroke();
+
+    // Transport/playhead marker
+    const markerMs = playheadMs !== undefined ? playheadMs : +els.transportPosMs.value;
+    const mx = msToX(clamp(markerMs, 0, totalMs));
+    ctx.strokeStyle = playheadMs !== undefined ? "#fff" : "rgba(255,255,255,0.45)";
+    ctx.lineWidth   = playheadMs !== undefined ? 1.5 : 1;
+    ctx.beginPath(); ctx.moveTo(mx, 0); ctx.lineTo(mx, H); ctx.stroke();
+  }
+
+  // Animate playhead while playing
+  function tickPlayhead() {
+    if (!state.isPlaying || !state.audioCtx || state.playStartAcTime === null) return;
+    const elapsed   = state.audioCtx.currentTime - state.playStartAcTime;
+    const loopOn    = els.loopEnable.checked;
+    const loopDurSec = Math.max(0.5, +els.loopDurationMs.value) / 1000;
+    const startSec  = state.playStartOffsetSec;
+    // wrap elapsed within loop duration when looping
+    const withinSec = loopOn ? (elapsed % loopDurSec) : elapsed;
+    const playheadMs = (startSec + withinSec) * 1000;
+    drawTransportWave(playheadMs);
+    requestAnimationFrame(tickPlayhead);
   }
 
   // ─── File loading ─────────────────────────────────────────────────────────
@@ -543,17 +663,26 @@
       const half = fullArea.h * 0.5;
       const topArea = { l: fullArea.l, t: fullArea.t, w: fullArea.w, h: half };
       const botArea = { l: fullArea.l, t: fullArea.t + half, w: fullArea.w, h: half };
-      ctxTime.strokeStyle = "rgba(100,120,150,0.4)"; ctxTime.lineWidth=1;
+      // divider line
+      ctxTime.strokeStyle = "rgba(100,120,150,0.4)"; ctxTime.lineWidth = 1;
       ctxTime.beginPath(); ctxTime.moveTo(fullArea.l, fullArea.t + half); ctxTime.lineTo(fullArea.l + fullArea.w, fullArea.t + half); ctxTime.stroke();
+      // Top half: input + pre-clip – clipped to topArea so pre-clip wave can't bleed below
+      ctxTime.save();
+      ctxTime.beginPath(); ctxTime.rect(topArea.l, topArea.t, topArea.w, topArea.h); ctxTime.clip();
       if (showThreshMain) drawThreshLines(ctxTime, topArea, pos, neg, yS);
-      drawWave(ctxTime, topArea, inSig,  "rgba(0,230,110,0.9)",  1.4, start,end, yS);
+      drawWave(ctxTime, topArea, inSig,  "rgba(0,230,110,0.9)",  1.4, start, end, yS);
       if (showPre) {
         ctxTime.setLineDash([6, 4]);
         drawWave(ctxTime, topArea, preClipSig, "rgba(235,220,90,0.9)", 1.2, start, end, yS);
         ctxTime.setLineDash([]);
       }
+      ctxTime.restore();
+      // Bottom half: output
+      ctxTime.save();
+      ctxTime.beginPath(); ctxTime.rect(botArea.l, botArea.t, botArea.w, botArea.h); ctxTime.clip();
       if (showThreshMain) drawThreshLines(ctxTime, botArea, pos, neg, yS);
-      drawWave(ctxTime, botArea, outSig, "rgba(90,160,255,0.9)", 1.5, start,end, yS);
+      drawWave(ctxTime, botArea, outSig, "rgba(90,160,255,0.9)", 1.5, start, end, yS);
+      ctxTime.restore();
     } else {
       if (showThreshMain) drawThreshLines(ctxTime, fullArea, pos, neg, yS);
       drawWave(ctxTime, fullArea, inSig,  "rgba(0,230,110,0.9)",  1.4, start,end, yS);
@@ -666,50 +795,30 @@
   }
 
   function updateStageLayout() {
-    const showMain = !!els.showTimeMain.checked;
-    const showOut = !!els.showTimeOut.checked;
-    const showFreq = !!els.showFreq.checked;
-    const cards = [
-      { el: els.timeMainCard, on: showMain },
-      { el: els.timeOutCard, on: showOut },
-      { el: els.freqCard, on: showFreq },
-    ];
-    cards.forEach(c => { c.el.style.display = c.on ? "" : "none"; c.el.style.gridColumn = ""; c.el.style.gridRow = ""; });
-    const onCount = cards.filter(c => c.on).length;
-    if (onCount <= 1) {
-      els.stage.style.gridTemplateColumns = "1fr";
-      els.stage.style.gridTemplateRows = "1fr";
-      const first = cards.find(c => c.on) || cards[0];
-      first.el.style.display = "";
-      first.el.style.gridColumn = "1 / 2";
-      first.el.style.gridRow = "1 / 2";
-      return;
-    }
-    if (showMain && showOut && !showFreq) {
-      els.stage.style.gridTemplateColumns = "2fr 1fr";
-      els.stage.style.gridTemplateRows = "1fr";
-      els.timeMainCard.style.gridColumn = "1 / 2"; els.timeMainCard.style.gridRow = "1 / 2";
-      els.timeOutCard.style.gridColumn = "2 / 3"; els.timeOutCard.style.gridRow = "1 / 2";
-      return;
-    }
-    if (showMain && showOut && showFreq) {
-      els.stage.style.gridTemplateColumns = "2fr 1fr";
-      els.stage.style.gridTemplateRows = "0.95fr 1.1fr";
-      els.timeMainCard.style.gridColumn = "1 / 2"; els.timeMainCard.style.gridRow = "1 / 2";
-      els.timeOutCard.style.gridColumn = "2 / 3"; els.timeOutCard.style.gridRow = "1 / 2";
-      els.freqCard.style.gridColumn = "1 / 3"; els.freqCard.style.gridRow = "2 / 3";
-      return;
-    }
-    // one time + freq
-    els.stage.style.gridTemplateColumns = "1fr";
-    els.stage.style.gridTemplateRows = "1fr 1fr";
-    if (showMain) {
-      els.timeMainCard.style.gridColumn = "1 / 2"; els.timeMainCard.style.gridRow = "1 / 2";
-      els.freqCard.style.gridColumn = "1 / 2"; els.freqCard.style.gridRow = "2 / 3";
+    const mainFolded = els.timeMainCard.classList.contains("folded");
+    const outFolded  = els.timeOutCard.classList.contains("folded");
+    const freqFolded = els.freqCard.classList.contains("folded");
+
+    // Time row: collapses to 30px header strip when both time cards are folded
+    els.timeRow.style.flex = (mainFolded && outFolded) ? "0 0 30px" : "1 1 0";
+
+    // Individual time card widths (horizontal flex)
+    if (!mainFolded && !outFolded) {
+      els.timeMainCard.style.flex = "2 1 0";
+      els.timeOutCard.style.flex  = "1 1 0";
+    } else if (mainFolded && !outFolded) {
+      els.timeMainCard.style.flex = "0 0 30px";
+      els.timeOutCard.style.flex  = "1 1 0";
+    } else if (!mainFolded && outFolded) {
+      els.timeMainCard.style.flex = "2 1 0";
+      els.timeOutCard.style.flex  = "0 0 30px";
     } else {
-      els.timeOutCard.style.gridColumn = "1 / 2"; els.timeOutCard.style.gridRow = "1 / 2";
-      els.freqCard.style.gridColumn = "1 / 2"; els.freqCard.style.gridRow = "2 / 3";
+      els.timeMainCard.style.flex = "0 0 30px";
+      els.timeOutCard.style.flex  = "0 0 30px";
     }
+
+    // Freq card: collapses to 30px when folded
+    els.freqCard.style.flex = freqFolded ? "0 0 30px" : "1.1 1 0";
   }
 
   async function getInputSignal() {
@@ -727,12 +836,12 @@
       raw = onePoleHighpass(raw, HPF_CUTOFF_HZ, sampleRate); // default 50Hz cleanup to reduce LF noise floor
       const totalMs = Math.max(1, Math.floor((raw.length / sampleRate) * 1000));
       const maxOffset = Math.max(0, totalMs - 1);
-      [els.timeOffsetMs, els.timeOffsetMsNum, els.transportPosMs, els.transportPosMsNum, els.loopStartMs, els.loopEndMs].forEach((el) => {
+      [els.timeOffsetMs, els.timeOffsetMsNum, els.transportPosMs, els.transportPosMsNum].forEach((el) => {
         if (!el) return;
-        if (el.id === "loopEndMs") el.max = String(totalMs);
-        else el.max = String(maxOffset);
+        el.max = String(maxOffset);
       });
-      els.transportPosLabel.textContent = getSourceMode() >= 4 ? "走带位置 Transport (ms)" : "时间偏移 / Offset (ms)";
+      if (els.loopDurationMs) els.loopDurationMs.max = String(totalMs);
+      els.transportPosLabel.textContent = getSourceMode() >= 4 ? "走带位置 Transport (ms)" : "时间偏移 Offset (ms)";
       if (+els.transportPosMs.value > maxOffset) {
         els.transportPosMs.value = String(maxOffset);
         els.transportPosMsNum.value = String(maxOffset);
@@ -757,6 +866,7 @@
       drawTime(gained, preClip, output, pos, neg);
       drawTimeOut(output, pos, neg);
       drawFreq(gained, output);
+      drawTransportWave(); // refresh overview
     } catch (e) {
       console.error("renderAll failed:", e);
     }
@@ -825,7 +935,6 @@
     els.algo.addEventListener("change", () => { updateAlgoUI(); renderAll(); });
     [els.distOn, els.asymToggle, els.splitView, els.fftLogX, els.showThreshMain, els.showThreshOut, els.showPreClip]
       .forEach(el => el?.addEventListener("change", renderAll));
-    [els.showTimeMain, els.showTimeOut, els.showFreq].forEach(el => el?.addEventListener("change", () => { updateStageLayout(); resizeAll(); }));
     els.distOnFoot?.addEventListener("click", () => {
       els.distOn.checked = !els.distOn.checked;
       syncDistFootSwitch();
@@ -891,26 +1000,48 @@
     els.snap220?.addEventListener("click", () => { els.sineFreq.value = "220"; els.sineFreqNum.value = "220"; renderAll(); });
     els.snap440?.addEventListener("click", () => { els.sineFreq.value = "440"; els.sineFreqNum.value = "440"; renderAll(); });
 
-    els.transportRender.addEventListener("click", renderAll);
-    els.transportPlayIn.addEventListener("click", () => state.inputGained && play(state.inputGained, "in"));
-    els.transportPlayOut.addEventListener("click", () => state.output && play(state.output, "out"));
+    // ── Transport controls ──────────────────────────────────────────────────
+    els.transportPlayIn.addEventListener("click", () => {
+      if (state.inputGained) play(state.inputGained, "in"); else renderAll().then(() => state.inputGained && play(state.inputGained, "in"));
+    });
+    els.transportPlayOut.addEventListener("click", () => {
+      if (state.output) play(state.output, "out"); else renderAll().then(() => state.output && play(state.output, "out"));
+    });
     els.transportStop.addEventListener("click", () => {
       stopPlayback();
-      if (els.returnToStart.checked) {
-        const pos = clamp(+els.loopStartMs.value, 0, +els.transportPosMs.max || 0);
-        els.transportPosMs.value = String(pos);
-        els.transportPosMsNum.value = String(pos);
-        syncOffsetToTransport();
-        renderAll();
-      }
+      drawTransportWave();
     });
-    [els.loopEnable, els.returnToStart, els.loopStartMs, els.loopEndMs].forEach(el => el?.addEventListener("change", renderAll));
+    [els.loopEnable, els.returnToStart].forEach(el => el?.addEventListener("change", () => { renderAll(); drawTransportWave(); }));
+    // Loop duration: redraw transport overview when changed
+    if (els.loopDurationMs) {
+      els.loopDurationMs.addEventListener("input", () => { els.loopDurationMsNum.value = els.loopDurationMs.value; drawTransportWave(); });
+      els.loopDurationMsNum.addEventListener("input", () => { els.loopDurationMs.value = els.loopDurationMsNum.value; drawTransportWave(); });
+    }
+    // Transport position: sync with offset + redraw transport wave
+    els.transportPosMs.addEventListener("input", () => { syncOffsetToTransport(); renderAll(); drawTransportWave(); });
+    els.transportPosMsNum.addEventListener("input", () => { syncOffsetToTransport(); renderAll(); drawTransportWave(); });
+
     els.closeDisclaimerToast?.addEventListener("click", () => { els.algoDisclaimerToast.style.display = "none"; });
 
+    // ── Card fold buttons ────────────────────────────────────────────────────
+    function bindFold(btnEl, cardEl, isHorizontal) {
+      if (!btnEl || !cardEl) return;
+      const toggle = () => {
+        cardEl.classList.toggle("folded");
+        const isFolded = cardEl.classList.contains("folded");
+        btnEl.textContent = isFolded ? (isHorizontal ? "▷" : "△") : "▽";
+        updateStageLayout();
+        setTimeout(() => resizeAll(), 40); // wait for transition
+      };
+      btnEl.addEventListener("click", (e) => { e.stopPropagation(); toggle(); });
+      cardEl.querySelector(".card-header")?.addEventListener("click", (e) => { if (!e.target.closest("button")) toggle(); });
+    }
+    bindFold(els.foldTimeMain, els.timeMainCard, true);
+    bindFold(els.foldTimeOut,  els.timeOutCard,  true);
+    bindFold(els.foldFreq,     els.freqCard,     false);
+
     const ro = new ResizeObserver(() => resizeAll());
-    ro.observe(els.timeCanvas.parentElement);
-    ro.observe(els.timeOutCanvas.parentElement);
-    ro.observe(els.freqCanvas.parentElement);
+    ro.observe(els.stage);
   }
 
   async function boot() {

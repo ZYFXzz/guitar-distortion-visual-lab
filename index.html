@@ -40,20 +40,81 @@
 
     /* stage */
     .stage-shell { display: flex; flex-direction: column; height: 100vh; padding: 6px; gap: 6px; }
+
+    /* Transport bar – 2-row fixed-height block */
     .transport-bar {
-      height: 64px; flex: 0 0 64px;
-      display: grid; grid-template-columns: 1fr 520px; gap: 8px;
-      background: #0f131a; border: 1px solid #263040; border-radius: 8px; padding: 8px;
-      align-items: center;
+      height: 96px; flex: 0 0 96px;
+      display: flex; flex-direction: column; gap: 4px;
+      background: #0f131a; border: 1px solid #263040; border-radius: 8px; padding: 6px 8px;
     }
-    .transport-left { display: grid; grid-template-columns: 86px 86px 86px 86px 82px 120px; gap: 6px; align-items: center; }
-    .transport-right { display: grid; grid-template-columns: 1fr 68px 68px 68px; gap: 6px; align-items: center; }
-    .transport-right label { font-size: 10px; margin: 0; }
-    .stage { display: grid; gap: 6px; flex: 1 1 auto; min-height: 0; }
-    .card { position: relative; background: #0f131a; border: 1px solid #263040; border-radius: 8px; overflow: hidden; }
-    .card h4 { position: absolute; margin: 0; top: 6px; left: 8px; font-size: 10px; color: #c8d4e8; z-index: 1; background: rgba(10,12,16,0.75); padding: 2px 6px; border-radius: 4px; pointer-events: none; }
-    canvas { display: block; }
-    .bottom-spacer { background: transparent; }
+    .transport-top {
+      display: flex; flex-direction: row; align-items: center; gap: 8px; flex: 0 0 42px;
+    }
+    .transport-btns { display: flex; gap: 5px; flex: 0 0 auto; }
+    .transport-btns button { width: auto; padding: 5px 10px; font-size: 11px; }
+    .transport-sep { width: 1px; height: 22px; background: #2b3b52; flex: 0 0 1px; align-self: center; }
+    .transport-opts { display: flex; align-items: center; gap: 8px; flex: 1; flex-wrap: nowrap; }
+    .transport-opts .hint { margin: 0; white-space: nowrap; }
+    .transport-opts input[type="range"] { width: 72px; padding: 0; }
+    .transport-opts input[type="number"] { width: 50px; padding: 3px 4px; }
+    .transport-vol details { }
+    .transport-vol details summary { cursor: pointer; font-size: 10px; color: #9eb1cc; list-style: none; padding: 3px 7px; border: 1px solid #3c4657; border-radius: 5px; background: #1f2531; white-space: nowrap; }
+    .transport-vol details summary::-webkit-details-marker { display: none; }
+    .transport-vol .vol-inner { position: absolute; right: 0; top: 100%; margin-top: 3px; background: #151922; border: 1px solid #263040; border-radius: 6px; padding: 6px 8px; display: flex; gap: 6px; align-items: center; z-index: 10; white-space: nowrap; min-width: 200px; }
+    .transport-vol { position: relative; flex: 0 0 auto; }
+    /* transport wave row */
+    .transport-wave-row {
+      display: flex; align-items: center; gap: 6px; flex: 0 0 32px;
+    }
+    .transport-wave-label { font-size: 10px; color: #9eb1cc; white-space: nowrap; margin: 0; flex: 0 0 auto; }
+    .transport-wave-wrap { flex: 1; position: relative; height: 28px; }
+    #transportCanvas { width: 100%; height: 100%; display: block; border-radius: 3px; background: #0a0e14; }
+    .transport-pos-overlay {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; margin: 0; padding: 0;
+    }
+
+    /* Stage – flex column */
+    .stage { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-height: 0; }
+    .time-row { display: flex; flex-direction: row; gap: 6px; flex: 1 1 0; min-height: 0; }
+    #freqCard { flex: 1.1 1 0; min-height: 0; }
+
+    /* Cards – flex column so canvas fills remainder */
+    .card {
+      position: relative; background: #0f131a; border: 1px solid #263040; border-radius: 8px;
+      overflow: hidden; display: flex; flex-direction: column;
+      flex: 1 1 0; min-width: 0; min-height: 0;
+    }
+    #timeMainCard { flex: 2 1 0; }
+    #timeOutCard  { flex: 1 1 0; }
+    .card-header {
+      flex: 0 0 30px; display: flex; align-items: center; justify-content: space-between;
+      padding: 0 8px; background: rgba(10,12,16,0.9); border-bottom: 1px solid #1e2c3e;
+      cursor: pointer; user-select: none; z-index: 2;
+    }
+    .card-title { font-size: 10px; color: #c8d4e8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; pointer-events: none; }
+    .fold-btn {
+      background: none !important; border: none !important; color: #7a95b5; cursor: pointer;
+      font-size: 13px; padding: 0 4px; width: auto !important; flex: 0 0 auto; line-height: 1;
+    }
+    .fold-btn:hover { color: #c8d4e8; }
+    canvas { display: block; flex: 1; min-height: 0; min-width: 0; }
+    canvas:not(#transportCanvas) { width: 100%; height: 100%; }
+
+    /* ── Fold states ── */
+    /* Horizontal fold for time cards (in flex row → collapses to narrow strip) */
+    .time-row .card.folded { flex: 0 0 30px !important; min-width: 30px; overflow: hidden; }
+    .time-row .card.folded .card-header {
+      writing-mode: vertical-rl; transform: rotate(180deg);
+      height: 100%; width: 30px; border-bottom: none; border-right: 1px solid #1e2c3e;
+      flex: none; overflow: hidden;
+    }
+    .time-row .card.folded .card-title { font-size: 9px; overflow: hidden; text-overflow: clip; }
+    /* Vertical fold for freq card (in flex column → collapses to thin header bar) */
+    #freqCard.folded { flex: 0 0 30px !important; min-height: 30px; }
+    /* Hide contents when folded */
+    .card.folded canvas { display: none !important; }
+    .card.folded .scope-controls { display: none !important; }
+    .card.folded .freq-controls { display: none !important; }
 
     .tri-switch { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 2px; }
     .tri-switch input { display: none; }
@@ -231,15 +292,7 @@
     <input id="timeOffsetMsNum" type="number" min="0" max="9900" step="1" value="0" style="display:none;" />
     <input id="splitView" type="checkbox" style="display:none;" />
 
-    <div class="row inline">
-      <div>
-        <label for="playbackGainDb">播放音量 Output Playback (dB)</label>
-        <span class="hint">只影响播放，不影响图像分析。默认 -6 dB 保护耳朵/音箱</span>
-        <input id="playbackGainDb" type="range" min="-24" max="0" step="0.1" value="-6" />
-      </div>
-      <input id="playbackGainDbNum" type="number" min="-24" max="0" step="0.1" value="-6" />
-    </div>
-
+    <!-- playbackGainDb moved to transport bar (🔊 音量 details) -->
 
     <div class="legend">
       🟢 绿色 = 输入信号（含 Gain）<br>
@@ -264,140 +317,135 @@
 
   <main class="stage-shell">
     <div class="transport-bar">
-      <div class="transport-left">
-        <button id="transportRender" type="button">Render</button>
-        <button id="transportPlayIn" type="button">Play In</button>
-        <button id="transportPlayOut" type="button">Play Out</button>
-        <button id="transportStop" type="button">Stop</button>
-        <label class="switch" style="margin-top:0">
-          <input id="loopEnable" type="checkbox" />
-          <span class="sw-track"></span>
-        </label>
-        <span class="hint" style="margin:0">Loop 循环 / Return To Start
-          <label class="switch" style="margin-left:6px;vertical-align:middle">
+      <!-- Row 1: buttons + loop options + volume -->
+      <div class="transport-top">
+        <div class="transport-btns">
+          <button id="transportPlayIn"  type="button">▶ 播放输入</button>
+          <button id="transportPlayOut" type="button">▶ 播放输出</button>
+          <button id="transportStop"    type="button">⏸ 暂停</button>
+        </div>
+        <div class="transport-sep"></div>
+        <div class="transport-opts">
+          <label class="switch" style="margin-top:0; flex:0 0 auto">
+            <input id="loopEnable" type="checkbox" />
+            <span class="sw-track"></span>
+          </label>
+          <span class="hint">⟳ Loop循环</span>
+          <label class="switch" style="margin-top:0; flex:0 0 auto">
             <input id="returnToStart" type="checkbox" checked />
             <span class="sw-track"></span>
           </label>
-        </span>
-      </div>
-      <div class="transport-right">
-        <div>
-          <label id="transportPosLabel" for="transportPosMs">走带位置 / Offset (ms)</label>
-          <input id="transportPosMs" type="range" min="0" max="9900" step="1" value="0" />
+          <span class="hint">↩ 返回起点</span>
+          <div class="transport-sep"></div>
+          <span class="hint">循环时长(ms)</span>
+          <input id="loopDurationMs" type="range" min="500" max="10000" step="100" value="1000" />
+          <input id="loopDurationMsNum" type="number" min="500" max="10000" step="100" value="1000" />
         </div>
-        <input id="transportPosMsNum" type="number" min="0" max="9900" step="1" value="0" />
-        <input id="loopStartMs" type="number" min="0" max="9900" step="1" value="0" title="Loop Start ms" />
-        <input id="loopEndMs" type="number" min="1" max="10000" step="1" value="1000" title="Loop End ms" />
+        <div class="transport-sep"></div>
+        <!-- Playback volume in a floating details -->
+        <div class="transport-vol">
+          <details>
+            <summary>🔊 播放音量</summary>
+            <div class="vol-inner">
+              <span class="hint" style="margin:0">Output Vol (dB)  播放音量，不影响图像</span>
+              <input id="playbackGainDb" type="range" min="-24" max="0" step="0.1" value="-6" style="width:80px;padding:0" />
+              <input id="playbackGainDbNum" type="number" min="-24" max="0" step="0.1" value="-6" style="width:46px;padding:3px 4px" />
+            </div>
+          </details>
+        </div>
+      </div>
+      <!-- Row 2: mini waveform overview + position slider -->
+      <div class="transport-wave-row">
+        <span id="transportPosLabel" class="transport-wave-label">走带 (ms)</span>
+        <div class="transport-wave-wrap">
+          <canvas id="transportCanvas"></canvas>
+          <input id="transportPosMs" type="range" min="0" max="9900" step="1" value="0" class="transport-pos-overlay" />
+        </div>
+        <input id="transportPosMsNum" type="number" min="0" max="9900" step="1" value="0" style="width:58px;padding:3px 4px;flex:0 0 auto" />
       </div>
     </div>
     <div id="stage" class="stage">
-      <div id="timeMainCard" class="card">
-        <h4>时域主窗口 · 输入（绿）vs 输出（蓝）+ 阈值虚线</h4>
-        <div class="scope-controls">
-          <div class="switch-row">
-            <div class="switch-label-wrap"><div class="switch-label">窗口显示 Main</div></div>
-            <label class="switch">
-              <input id="showTimeMainUi" type="checkbox" checked />
-              <span class="sw-track"></span>
-            </label>
+      <!-- Time row: main + output side by side -->
+      <div id="timeRow" class="time-row">
+        <div id="timeMainCard" class="card">
+          <div class="card-header">
+            <span class="card-title">时域主窗口 · 输入（绿）vs 输出（蓝）+ 阈值虚线</span>
+            <button class="fold-btn" id="foldTimeMain" title="折叠/展开" type="button">▽</button>
           </div>
-          <div class="row inline">
-            <div>
-              <label for="timeWindowMsUi">Time Window 时间窗口 (ms)</label>
-              <input id="timeWindowMsUi" type="range" min="5" max="200" step="1" value="40" />
+          <div class="scope-controls">
+            <div class="row inline">
+              <div>
+                <label for="timeWindowMsUi">Time Window 时间窗口 (ms)</label>
+                <input id="timeWindowMsUi" type="range" min="5" max="200" step="1" value="40" />
+              </div>
+              <input id="timeWindowMsUiNum" type="number" min="5" max="200" step="1" value="40" />
             </div>
-            <input id="timeWindowMsUiNum" type="number" min="5" max="200" step="1" value="40" />
-          </div>
-          <div class="row inline">
-            <div>
-              <label for="timeOffsetMsUi">Time Offset 时间偏移 (ms)</label>
-              <input id="timeOffsetMsUi" type="range" min="0" max="9900" step="1" value="0" />
+            <div class="row inline">
+              <div>
+                <label for="timeOffsetMsUi">Time Offset 时间偏移 (ms)</label>
+                <input id="timeOffsetMsUi" type="range" min="0" max="9900" step="1" value="0" />
+              </div>
+              <input id="timeOffsetMsUiNum" type="number" min="0" max="9900" step="1" value="0" />
             </div>
-            <input id="timeOffsetMsUiNum" type="number" min="0" max="9900" step="1" value="0" />
+            <div class="switch-row">
+              <div class="switch-label-wrap"><div class="switch-label">Split View 分层显示</div></div>
+              <label class="switch"><input id="splitViewUi" type="checkbox" /><span class="sw-track"></span></label>
+            </div>
+            <div class="switch-row">
+              <div class="switch-label-wrap"><div class="switch-label">Threshold 阈值线（主窗口）</div></div>
+              <label class="switch"><input id="showThreshMainUi" type="checkbox" checked /><span class="sw-track"></span></label>
+            </div>
+            <div class="switch-row">
+              <div class="switch-label-wrap"><div class="switch-label">Pre-Clip 黄线（Drive前）</div></div>
+              <label class="switch"><input id="showPreClipUi" type="checkbox" checked /><span class="sw-track"></span></label>
+            </div>
           </div>
-          <div class="switch-row">
-            <div class="switch-label-wrap"><div class="switch-label">Split View 分层显示</div></div>
-            <label class="switch">
-              <input id="splitViewUi" type="checkbox" />
-              <span class="sw-track"></span>
-            </label>
-          </div>
-          <div class="switch-row">
-            <div class="switch-label-wrap"><div class="switch-label">Threshold 阈值线（主窗口）</div></div>
-            <label class="switch">
-              <input id="showThreshMainUi" type="checkbox" checked />
-              <span class="sw-track"></span>
-            </label>
-          </div>
-          <div class="switch-row">
-            <div class="switch-label-wrap"><div class="switch-label">Pre-Clip 黄线（Drive前）</div></div>
-            <label class="switch">
-              <input id="showPreClipUi" type="checkbox" checked />
-              <span class="sw-track"></span>
-            </label>
-          </div>
+          <canvas id="timeCanvas"></canvas>
         </div>
-        <canvas id="timeCanvas"></canvas>
-      </div>
-      <div id="timeOutCard" class="card">
-        <h4>输出波形（单独显示）</h4>
-        <div class="scope-controls" style="width: 220px;">
-          <div class="switch-row">
-            <div class="switch-label-wrap"><div class="switch-label">窗口显示 Output</div></div>
-            <label class="switch">
-              <input id="showTimeOutUi" type="checkbox" checked />
-              <span class="sw-track"></span>
-            </label>
+
+        <div id="timeOutCard" class="card">
+          <div class="card-header">
+            <span class="card-title">输出波形（单独显示）</span>
+            <button class="fold-btn" id="foldTimeOut" title="折叠/展开" type="button">▽</button>
           </div>
-          <div class="switch-row">
-            <div class="switch-label-wrap"><div class="switch-label">Threshold 阈值线（输出窗）</div></div>
-            <label class="switch">
-              <input id="showThreshOutUi" type="checkbox" checked />
-              <span class="sw-track"></span>
-            </label>
+          <div class="scope-controls" style="width:220px;">
+            <div class="switch-row">
+              <div class="switch-label-wrap"><div class="switch-label">Threshold 阈值线（输出窗）</div></div>
+              <label class="switch"><input id="showThreshOutUi" type="checkbox" checked /><span class="sw-track"></span></label>
+            </div>
           </div>
+          <canvas id="timeOutCanvas"></canvas>
         </div>
-        <canvas id="timeOutCanvas"></canvas>
       </div>
+
+      <!-- Freq card: full width row below -->
       <div id="freqCard" class="card">
-      <h4>频域 FFT · 输入 vs 输出（50Hz 起）· 绿=输入 蓝=输出</h4>
-      <div class="freq-controls">
-        <div class="switch-row">
-          <div class="switch-label-wrap">
-            <div class="switch-label">窗口显示 FFT</div>
-          </div>
-          <label class="switch">
-            <input id="showFreqUi" type="checkbox" checked />
-            <span class="sw-track"></span>
-          </label>
+        <div class="card-header">
+          <span class="card-title">频域 FFT · 输入 vs 输出（50Hz 起）· 绿=输入 蓝=输出</span>
+          <button class="fold-btn" id="foldFreq" title="折叠/展开" type="button">▽</button>
         </div>
-        <div class="row inline">
-          <div>
-            <label for="fftMaxHz">FFT Max Hz 频率上限</label>
-            <input id="fftMaxHz" type="range" min="5000" max="20000" step="100" value="5000" />
+        <div class="freq-controls">
+          <div class="row inline">
+            <div>
+              <label for="fftMaxHz">FFT Max Hz 频率上限</label>
+              <input id="fftMaxHz" type="range" min="5000" max="20000" step="100" value="5000" />
+            </div>
+            <input id="fftMaxHzNum" type="number" min="5000" max="20000" step="100" value="5000" />
           </div>
-          <input id="fftMaxHzNum" type="number" min="5000" max="20000" step="100" value="5000" />
-        </div>
-        <div class="row inline">
-          <div>
-            <label for="fftDbMin">FFT Min dB 幅度下限</label>
-            <input id="fftDbMin" type="range" min="-100" max="-40" step="1" value="-60" />
+          <div class="row inline">
+            <div>
+              <label for="fftDbMin">FFT Min dB 幅度下限</label>
+              <input id="fftDbMin" type="range" min="-100" max="-40" step="1" value="-60" />
+            </div>
+            <input id="fftDbMinNum" type="number" min="-100" max="-40" step="1" value="-60" />
           </div>
-          <input id="fftDbMinNum" type="number" min="-100" max="-40" step="1" value="-60" />
-        </div>
-        <div class="switch-row">
-          <div class="switch-label-wrap">
-            <div class="switch-label">Freq Axis Log 对数频轴</div>
+          <div class="switch-row">
+            <div class="switch-label-wrap"><div class="switch-label">Freq Axis Log 对数频轴</div></div>
+            <label class="switch"><input id="fftLogX" type="checkbox" /><span class="sw-track"></span></label>
           </div>
-          <label class="switch">
-            <input id="fftLogX" type="checkbox" />
-            <span class="sw-track"></span>
-          </label>
         </div>
+        <canvas id="freqCanvas"></canvas>
       </div>
-      <canvas id="freqCanvas"></canvas>
-    </div>
-    </div>
   </main>
 </div>
 <script src="distortion-lab.js"></script>
