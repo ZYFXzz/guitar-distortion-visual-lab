@@ -18,17 +18,23 @@
     thresholdNum: $("thresholdNum"),
     drive: $("drive"),
     driveNum: $("driveNum"),
-    asym: $("asym"),
-    asymNum: $("asymNum"),
+    asymToggle: $("asymToggle"),
+    timeWindowMs: $("timeWindowMs"),
+    timeWindowMsNum: $("timeWindowMsNum"),
+    timeOffsetMs: $("timeOffsetMs"),
+    timeOffsetMsNum: $("timeOffsetMsNum"),
+    splitView: $("splitView"),
     btnRender: $("btnRender"),
     btnPlayIn: $("btnPlayIn"),
     btnPlayOut: $("btnPlayOut"),
     btnStop: $("btnStop"),
     timeCanvas: $("timeCanvas"),
+    timeOutCanvas: $("timeOutCanvas"),
     freqCanvas: $("freqCanvas"),
   };
 
   const ctxTime = els.timeCanvas.getContext("2d");
+  const ctxTimeOut = els.timeOutCanvas.getContext("2d");
   const ctxFreq = els.freqCanvas.getContext("2d");
 
   const state = {
@@ -47,7 +53,7 @@
   }
 
   function setSize() {
-    for (const c of [els.timeCanvas, els.freqCanvas]) {
+    for (const c of [els.timeCanvas, els.timeOutCanvas, els.freqCanvas]) {
       c.width = c.clientWidth * devicePixelRatio;
       c.height = c.clientHeight * devicePixelRatio;
       c.getContext("2d").setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
@@ -73,6 +79,7 @@
     return out;
   }
 
+  // Synthetic placeholders until user loads real guitar files.
   function generateGuitarSingle() {
     const n = Math.floor(sampleRate * durationSec);
     const out = new Float32Array(n);
@@ -92,7 +99,7 @@
   function generateGuitarChord() {
     const n = Math.floor(sampleRate * durationSec);
     const out = new Float32Array(n);
-    const notes = [82.41, 110.0, 146.83, 196.0, 246.94, 329.63];
+    const notes = [82.41, 110.0, 146.83, 196.0, 246.94, 329.63]; // EADGBE-ish
     for (let i = 0; i < n; i++) {
       const t = i / sampleRate;
       const env = Math.exp(-2.6 * t) * (1 - Math.exp(-85 * t));
@@ -142,17 +149,16 @@
     return toMonoFloat32(decoded);
   }
 
-  function thresholds(baseTh, asym) {
-    const a = clamp(asym, -0.99, 0.99);
-    const pos = clamp(baseTh * (1 + a), 0.05, 1.5);
-    const neg = clamp(baseTh * (1 - a), 0.05, 1.5);
+  function thresholds(baseTh, asymOn) {
+    const pos = clamp(baseTh, 0.05, 1.5);
+    const neg = asymOn ? 2.0 : pos; // asymmetric mode: mainly clip positive half-wave
     return { pos, neg };
   }
 
   function applyDistortion(x, cfg) {
     const y = new Float32Array(x.length);
     const drive = dbToLin(cfg.driveDb);
-    const { pos, neg } = thresholds(cfg.threshold, cfg.asym);
+    const { pos, neg } = thresholds(cfg.threshold, cfg.asymOn);
     const on = cfg.distOn;
     const algo = cfg.algo;
 
@@ -171,10 +177,11 @@
           const sign = d >= 0 ? 1 : -1;
           const a = Math.abs(d) / t;
           let o;
-          if (a < 1) o = a - (a * a * a) / 3;
+          if (a < 1) o = a - (a * a * a) / 3; // soft knee
           else o = 2 / 3 + (1 - Math.exp(-(a - 1) * 2.5)) / 3;
           s = sign * t * o;
         } else if (algo === "mosfet") {
+          // soft positive, harder negative style
           if (d >= 0) s = pos * (1 - Math.exp(-d / pos));
           else s = -Math.min(neg, Math.abs(d) * 0.75 + Math.pow(Math.abs(d), 2) * 0.08);
         } else if (algo === "fuzz") {
@@ -184,7 +191,7 @@
           s = clamp(s, -neg, pos);
         } else if (algo === "rectifier") {
           const r = Math.abs(d);
-          s = d >= 0 ? r : -0.35 * r;
+          s = d >= 0 ? r : -0.35 * r; // half/partial rectifier feel
           s = clamp(s, -neg, pos);
         }
       }
@@ -230,6 +237,7 @@
     for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1));
     for (let i = 0; i < N; i++) re[i] = (signal[i] || 0) * win[i];
 
+    // Cooley–Tukey radix-2 iterative
     let j = 0;
     for (let i = 1; i < N; i++) {
       let bit = N >> 1;
@@ -279,35 +287,78 @@
     }
   }
 
+  function getTimeWindowIndices(totalSamples) {
+    const windowMs = +els.timeWindowMs.value;
+    const offsetMs = +els.timeOffsetMs.value;
+    const samplesToShow = Math.max(64, Math.floor((windowMs / 1000) * sampleRate));
+    const start = clamp(Math.floor((offsetMs / 1000) * sampleRate), 0, Math.max(0, totalSamples - samplesToShow));
+    const end = Math.min(totalSamples, start + samplesToShow);
+    return { start, end };
+  }
+
+  function drawThresholdLines(ctx, w, segmentH, yOffset, posThr, negThr, yScale) {
+    const toY = (v) => yOffset + segmentH * 0.5 * (1 - v / yScale);
+    ctx.setLineDash([8, 6]);
+    ctx.strokeStyle = "rgba(255,180,120,0.9)";
+    if (Math.abs(posThr) <= yScale) {
+      ctx.beginPath(); ctx.moveTo(0, toY(posThr)); ctx.lineTo(w, toY(posThr)); ctx.stroke();
+    }
+    if (Math.abs(negThr) <= yScale) {
+      ctx.beginPath(); ctx.moveTo(0, toY(-negThr)); ctx.lineTo(w, toY(-negThr)); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+
+  function drawWaveSlice(ctx, sig, color, width, start, end, yOffset, segmentH, yScale) {
+    const w = ctx.canvas.clientWidth;
+    const len = Math.max(1, end - start);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    for (let i = 0; i < len; i++) {
+      const sampleIdx = start + i;
+      const x = (i / (len - 1 || 1)) * w;
+      const y = yOffset + (segmentH * 0.5) * (1 - sig[sampleIdx] / yScale);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
   function drawTime(inputSig, outputSig, posThr, negThr) {
     const w = els.timeCanvas.clientWidth;
     const h = els.timeCanvas.clientHeight;
+    const yScale = 2.0; // fixed axis
     drawGrid(ctxTime, w, h);
+    const { start, end } = getTimeWindowIndices(Math.min(inputSig.length, outputSig.length));
 
-    const toY = (v) => h * 0.5 * (1 - v / 2);
-    ctxTime.setLineDash([8, 6]);
-    ctxTime.strokeStyle = "rgba(255,180,120,0.9)";
-    ctxTime.beginPath(); ctxTime.moveTo(0, toY(posThr)); ctxTime.lineTo(w, toY(posThr)); ctxTime.stroke();
-    ctxTime.beginPath(); ctxTime.moveTo(0, toY(-negThr)); ctxTime.lineTo(w, toY(-negThr)); ctxTime.stroke();
-    ctxTime.setLineDash([]);
+    if (els.splitView.checked) {
+      const half = h * 0.5;
+      ctxTime.strokeStyle = "rgba(120,140,170,0.5)";
+      ctxTime.beginPath(); ctxTime.moveTo(0, half); ctxTime.lineTo(w, half); ctxTime.stroke();
 
-    const N = Math.min(inputSig.length, outputSig.length);
-    const stride = Math.max(1, Math.floor(N / w));
-    const draw = (sig, color, width) => {
-      ctxTime.strokeStyle = color;
-      ctxTime.lineWidth = width;
-      ctxTime.beginPath();
-      let started = false;
-      for (let i = 0, px = 0; i < N; i += stride, px++) {
-        const x = px;
-        const y = toY(sig[i]);
-        if (!started) { ctxTime.moveTo(x, y); started = true; }
-        else ctxTime.lineTo(x, y);
-      }
-      ctxTime.stroke();
-    };
-    draw(inputSig, "rgba(0,255,120,0.95)", 1.5);
-    draw(outputSig, "rgba(100,170,255,0.95)", 1.7);
+      // top: input
+      drawWaveSlice(ctxTime, inputSig, "rgba(0,255,120,0.95)", 1.4, start, end, 0, half, yScale);
+      drawThresholdLines(ctxTime, w, half, 0, posThr, negThr, yScale);
+
+      // bottom: output
+      drawWaveSlice(ctxTime, outputSig, "rgba(100,170,255,0.95)", 1.6, start, end, half, half, yScale);
+      drawThresholdLines(ctxTime, w, half, half, posThr, negThr, yScale);
+    } else {
+      drawThresholdLines(ctxTime, w, h, 0, posThr, negThr, yScale);
+      drawWaveSlice(ctxTime, inputSig, "rgba(0,255,120,0.95)", 1.4, start, end, 0, h, yScale);
+      drawWaveSlice(ctxTime, outputSig, "rgba(100,170,255,0.95)", 1.6, start, end, 0, h, yScale);
+    }
+  }
+
+  function drawTimeOutput(outputSig, posThr, negThr) {
+    const w = els.timeOutCanvas.clientWidth;
+    const h = els.timeOutCanvas.clientHeight;
+    const yScale = 2.0; // fixed axis
+    drawGrid(ctxTimeOut, w, h);
+    const { start, end } = getTimeWindowIndices(outputSig.length);
+    drawThresholdLines(ctxTimeOut, w, h, 0, posThr, negThr, yScale);
+    drawWaveSlice(ctxTimeOut, outputSig, "rgba(100,170,255,0.95)", 1.7, start, end, 0, h, yScale);
   }
 
   function drawFreq(inputSig, outputSig) {
@@ -346,8 +397,15 @@
   async function getInputSignal() {
     const mode = els.sourceType.value;
     if (mode === "sine") return generateSine(+els.sineFreq.value);
-    if (mode === "guitar_chord") return state.chordBuffer || generateGuitarChord();
-    if (mode === "guitar_single") return state.singleBuffer || generateGuitarSingle();
+
+    if (mode === "guitar_chord") {
+      if (state.chordBuffer) return state.chordBuffer;
+      return generateGuitarChord();
+    }
+    if (mode === "guitar_single") {
+      if (state.singleBuffer) return state.singleBuffer;
+      return generateGuitarSingle();
+    }
     return generateSine(220);
   }
 
@@ -358,11 +416,11 @@
     for (let i = 0; i < raw.length; i++) gained[i] = raw[i] * gain;
 
     const cfg = {
-      distOn: els.distOn.value === "on",
+      distOn: els.distOn.checked,
       algo: els.algo.value,
       threshold: +els.threshold.value,
       driveDb: +els.drive.value,
-      asym: +els.asym.value,
+      asymOn: els.asymToggle.checked,
     };
     const { output, pos, neg } = applyDistortion(gained, cfg);
 
@@ -371,6 +429,7 @@
     state.output = output;
 
     drawTime(gained, output, pos, neg);
+    drawTimeOutput(output, pos, neg);
     drawFreq(gained, output);
   }
 
@@ -390,8 +449,13 @@
     bindPair(els.gainDb, els.gainDbNum);
     bindPair(els.threshold, els.thresholdNum);
     bindPair(els.drive, els.driveNum);
-    bindPair(els.asym, els.asymNum);
-    [els.sourceType, els.distOn, els.algo].forEach((el) => el.addEventListener("change", renderAll));
+    bindPair(els.timeWindowMs, els.timeWindowMsNum);
+    bindPair(els.timeOffsetMs, els.timeOffsetMsNum);
+
+    [
+      els.sourceType, els.distOn, els.algo, els.asymToggle, els.splitView,
+    ].forEach((el) => el.addEventListener("change", renderAll));
+
     els.btnRender.addEventListener("click", renderAll);
     els.btnPlayIn.addEventListener("click", () => state.inputGained && play(state.inputGained));
     els.btnPlayOut.addEventListener("click", () => state.output && play(state.output));

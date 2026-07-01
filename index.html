@@ -20,19 +20,51 @@
     .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
     button { cursor: pointer; background: #274065; }
     button:hover { background: #345687; }
-    .stage { display: grid; grid-template-rows: 1fr 1fr; gap: 8px; padding: 8px; }
+    .stage { display: grid; grid-template-rows: 30% 20% 50%; gap: 8px; padding: 8px; height: 100vh; box-sizing: border-box; }
     .card { position: relative; background: #0f131a; border: 1px solid #263040; border-radius: 8px; overflow: hidden; }
     .card h4 { position: absolute; margin: 0; top: 8px; left: 10px; font-size: 12px; color: #c8d4e8; z-index: 1; background: rgba(10,12,16,0.6); padding: 2px 6px; border-radius: 4px; }
     canvas { width: 100%; height: 100%; display: block; }
     .legend { font-size: 11px; color: #9eb1cc; margin-top: 6px; line-height: 1.4; }
     .small { font-size: 11px; color: #8ea4c7; }
+    .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .switch-label { font-size: 12px; color: #cfd8e3; }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 46px;
+      height: 24px;
+      flex: 0 0 auto;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background-color: #2f3a4c;
+      border: 1px solid #3c4657;
+      transition: 0.2s;
+      border-radius: 999px;
+    }
+    .slider::before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 2px;
+      top: 2px;
+      background: #dce8ff;
+      transition: 0.2s;
+      border-radius: 50%;
+    }
+    .switch input:checked + .slider { background-color: #345687; }
+    .switch input:checked + .slider::before { transform: translateX(22px); }
   </style>
 </head>
 <body>
   <div class="wrap">
     <aside class="panel">
       <h2>Distortion Visualizer</h2>
-      <div class="small">GitHub Pages demo.</div>
+      <div class="small">CodePen 用：HTML 面板粘本文件，JS 面板粘同目录 JS 文件。</div>
 
       <h3>输入源</h3>
       <div class="row">
@@ -63,16 +95,16 @@
       <div class="row inline">
         <div>
           <label for="gainDb">Input Gain (dB)</label>
-          <input id="gainDb" type="range" min="-12" max="36" step="0.1" value="12" />
+          <input id="gainDb" type="range" min="-6" max="20" step="0.1" value="6" />
         </div>
-        <input id="gainDbNum" type="number" min="-12" max="36" step="0.1" value="12" />
+        <input id="gainDbNum" type="number" min="-6" max="20" step="0.1" value="6" />
       </div>
-      <div class="row">
-        <label for="distOn">Distortion</label>
-        <select id="distOn">
-          <option value="on">On</option>
-          <option value="off">Off (Gain only)</option>
-        </select>
+      <div class="switch-row">
+        <span class="switch-label">Distortion On/Off</span>
+        <label class="switch">
+          <input id="distOn" type="checkbox" checked />
+          <span class="slider"></span>
+        </label>
       </div>
       <div class="row">
         <label for="algo">Algorithm</label>
@@ -96,16 +128,39 @@
       <div class="row inline">
         <div>
           <label for="drive">Drive (algorithm intensity)</label>
-          <input id="drive" type="range" min="0" max="30" step="0.1" value="12" />
+          <input id="drive" type="range" min="0" max="20" step="0.1" value="8" />
         </div>
-        <input id="driveNum" type="number" min="0" max="30" step="0.1" value="12" />
+        <input id="driveNum" type="number" min="0" max="20" step="0.1" value="8" />
+      </div>
+      <div class="switch-row">
+        <span class="switch-label">Asymmetric Clip（只削正半波）</span>
+        <label class="switch">
+          <input id="asymToggle" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <h3>示波器视图</h3>
+      <div class="row inline">
+        <div>
+          <label for="timeWindowMs">Time Window (ms)</label>
+          <input id="timeWindowMs" type="range" min="5" max="200" step="1" value="40" />
+        </div>
+        <input id="timeWindowMsNum" type="number" min="5" max="200" step="1" value="40" />
       </div>
       <div class="row inline">
         <div>
-          <label for="asym">Asymmetry (-1 ~ 1)</label>
-          <input id="asym" type="range" min="-1" max="1" step="0.01" value="0" />
+          <label for="timeOffsetMs">Time Offset (ms)</label>
+          <input id="timeOffsetMs" type="range" min="0" max="1900" step="1" value="0" />
         </div>
-        <input id="asymNum" type="number" min="-1" max="1" step="0.01" value="0" />
+        <input id="timeOffsetMsNum" type="number" min="0" max="1900" step="1" value="0" />
+      </div>
+      <div class="switch-row">
+        <span class="switch-label">Split View（输入/输出分层）</span>
+        <label class="switch">
+          <input id="splitView" type="checkbox" />
+          <span class="slider"></span>
+        </label>
       </div>
 
       <div class="btns">
@@ -127,8 +182,12 @@
 
     <main class="stage">
       <div class="card">
-        <h4>时域：输入 vs 输出（含阈值虚线）</h4>
+        <h4>时域主窗口：输入 vs 输出（含阈值虚线）</h4>
         <canvas id="timeCanvas"></canvas>
+      </div>
+      <div class="card">
+        <h4>时域输出窗口：输出 signal</h4>
+        <canvas id="timeOutCanvas"></canvas>
       </div>
       <div class="card">
         <h4>频域：输入 vs 输出（FFT 幅频）</h4>
