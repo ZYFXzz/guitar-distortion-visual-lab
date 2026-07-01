@@ -53,6 +53,28 @@
       border: 1px solid #3c4657; border-radius: 5px; background: #1f2531; color: #cfd8e3; cursor: pointer;
     }
     .tri-switch input:checked + label { background: #345687; color: #f3f8ff; border-color: #4f6d97; }
+    .mini-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 4px; }
+    .mini-btns button { padding: 4px 6px; font-size: 10px; }
+    .knob-wrap { display: grid; gap: 6px; }
+    .knob-ui {
+      width: 62px; height: 62px; border-radius: 50%;
+      margin: 4px auto 0; position: relative;
+      border: 2px solid #43506a; background: radial-gradient(circle at 32% 30%, #3a4a64 0%, #1f2a3a 70%, #131a25 100%);
+      cursor: pointer;
+    }
+    .knob-ui::after {
+      content: ""; position: absolute; left: 50%; top: 7px; width: 3px; height: 18px;
+      background: #d9e6ff; border-radius: 2px; transform: translateX(-50%);
+      box-shadow: 0 0 4px rgba(190,220,255,.6);
+    }
+    .knob-caption { text-align: center; font-size: 10px; color: #cfd8e3; }
+    .freq-controls {
+      position: absolute; right: 8px; top: 8px; z-index: 3; width: 250px;
+      background: rgba(10,12,16,.82); border: 1px solid #2e3a4f; border-radius: 6px; padding: 6px;
+      backdrop-filter: blur(2px);
+    }
+    .freq-controls .row { margin-bottom: 5px; }
+    .freq-controls .switch-row { margin-bottom: 0; }
   </style>
 </head>
 <body>
@@ -62,32 +84,43 @@
     <span class="hint" style="margin:0 0 2px">吉他失真底层原理可视化 · 波形 + 频谱实时演示</span>
 
     <h3>输入源</h3>
-    <div class="row">
-      <label for="sourceType">信号源类型</label>
-      <span class="hint">选择进入失真电路的原始信号</span>
-      <select id="sourceType">
-        <option value="sine">正弦波（纯净单频）</option>
-        <option value="guitar_chord">吉他和弦（合成示例）</option>
-        <option value="guitar_single">吉他单音拨弦（合成示例）</option>
-      </select>
+    <div class="row knob-wrap">
+      <label>输入选择旋钮（6挡）</label>
+      <span class="hint">点击圆钮切换：正弦波 / 合成单音 / 合成和弦 / 文件1 / 文件2 / 文件3</span>
+      <div id="sourceKnob" class="knob-ui" role="button" aria-label="source knob" tabindex="0"></div>
+      <div id="sourceKnobLabel" class="knob-caption">正弦波</div>
+      <input id="sourceKnobIdx" type="range" min="0" max="5" step="1" value="0" style="display:none;" />
     </div>
     <div class="row inline">
       <div>
         <label for="sineFreq">正弦波频率 (Hz)</label>
-        <span class="hint">范围：低音 E2(82Hz) 到高音弦 24 品 E6(≈1319Hz)</span>
-        <input id="sineFreq" type="range" min="82" max="1319" step="1" value="220" />
+        <span class="hint">范围：低音 E2(82Hz) 到高音弦 24 品 E6(≈1319Hz)，建议 220~440Hz（更不炸耳）</span>
+        <input id="sineFreq" type="range" min="82" max="1319" step="1" value="220" list="sineSnapMarks" />
+        <datalist id="sineSnapMarks">
+          <option value="220"></option>
+          <option value="440"></option>
+        </datalist>
       </div>
       <input id="sineFreqNum" type="number" min="82" max="1319" step="1" value="220" />
     </div>
-    <div class="row">
-      <label for="inputFileChord">上传和弦音频（可选）</label>
-      <input id="inputFileChord" type="file" accept="audio/*" />
-      <span id="chordStatus" class="hint">未加载外部文件</span>
+    <div class="mini-btns">
+      <button id="snap220" type="button">Snap 220Hz</button>
+      <button id="snap440" type="button">Snap 440Hz</button>
     </div>
     <div class="row">
-      <label for="inputFileSingle">上传单音音频（可选）</label>
-      <input id="inputFileSingle" type="file" accept="audio/*" />
-      <span id="singleStatus" class="hint">未加载外部文件</span>
+      <label for="inputFile1">文件槽位 1（≤10秒）</label>
+      <input id="inputFile1" type="file" accept="audio/*" />
+      <span id="fileStatus1" class="hint">未加载外部文件</span>
+    </div>
+    <div class="row">
+      <label for="inputFile2">文件槽位 2（≤10秒）</label>
+      <input id="inputFile2" type="file" accept="audio/*" />
+      <span id="fileStatus2" class="hint">未加载外部文件</span>
+    </div>
+    <div class="row">
+      <label for="inputFile3">文件槽位 3（≤10秒）</label>
+      <input id="inputFile3" type="file" accept="audio/*" />
+      <span id="fileStatus3" class="hint">未加载外部文件</span>
     </div>
 
     <h3>增益与失真</h3>
@@ -167,9 +200,9 @@
       <div>
         <label for="timeOffsetMs">时间偏移 Offset (ms)</label>
         <span class="hint">从第几毫秒开始显示，用于平移查看不同波形区间</span>
-        <input id="timeOffsetMs" type="range" min="0" max="1900" step="1" value="0" />
+        <input id="timeOffsetMs" type="range" min="0" max="9900" step="1" value="0" />
       </div>
-      <input id="timeOffsetMsNum" type="number" min="0" max="1900" step="1" value="0" />
+      <input id="timeOffsetMsNum" type="number" min="0" max="9900" step="1" value="0" />
     </div>
     <div class="switch-row">
       <div class="switch-label-wrap">
@@ -182,42 +215,6 @@
       </label>
     </div>
 
-    <div class="row">
-      <label>FFT 质量档位（含抗混叠）</label>
-      <span class="hint">3 档开关：Eco / Balanced / Detail（影响 FFT 长度、hop 和非线性阶段抗混叠强度）</span>
-      <div class="tri-switch">
-        <div>
-          <input id="fftModeEco" type="radio" name="fftMode" value="eco" />
-          <label for="fftModeEco">ECO</label>
-        </div>
-        <div>
-          <input id="fftModeBalanced" type="radio" name="fftMode" value="balanced" checked />
-          <label for="fftModeBalanced">BAL</label>
-        </div>
-        <div>
-          <input id="fftModeDetail" type="radio" name="fftMode" value="detail" />
-          <label for="fftModeDetail">DETAIL</label>
-        </div>
-      </div>
-    </div>
-    <div class="row inline">
-      <div>
-        <label for="fftMaxHz">FFT 最大频率 (Hz)</label>
-        <span class="hint">固定坐标轴上限，范围 5k~20k</span>
-        <input id="fftMaxHz" type="range" min="5000" max="20000" step="100" value="5000" />
-      </div>
-      <input id="fftMaxHzNum" type="number" min="5000" max="20000" step="100" value="5000" />
-    </div>
-    <div class="switch-row">
-      <div class="switch-label-wrap">
-        <div class="switch-label">FFT 频率轴 Log</div>
-        <span class="hint">关闭=线性频率轴，开启=对数频率轴</span>
-      </div>
-      <label class="switch">
-        <input id="fftLogX" type="checkbox" />
-        <span class="sw-track"></span>
-      </label>
-    </div>
     <div class="row inline">
       <div>
         <label for="playbackGainDb">播放音量 Output Playback (dB)</label>
@@ -256,7 +253,32 @@
       </div>
     </div>
     <div class="card">
-      <h4>频域 FFT · 输入 vs 输出（0–5 kHz）· 绿=输入 蓝=输出</h4>
+      <h4>频域 FFT · 输入 vs 输出（50Hz 起）· 绿=输入 蓝=输出</h4>
+      <div class="freq-controls">
+        <div class="row inline">
+          <div>
+            <label for="fftMaxHz">FFT Max Hz</label>
+            <input id="fftMaxHz" type="range" min="5000" max="20000" step="100" value="5000" />
+          </div>
+          <input id="fftMaxHzNum" type="number" min="5000" max="20000" step="100" value="5000" />
+        </div>
+        <div class="row inline">
+          <div>
+            <label for="fftDbMin">FFT Min dB</label>
+            <input id="fftDbMin" type="range" min="-100" max="-40" step="1" value="-60" />
+          </div>
+          <input id="fftDbMinNum" type="number" min="-100" max="-40" step="1" value="-60" />
+        </div>
+        <div class="switch-row">
+          <div class="switch-label-wrap">
+            <div class="switch-label">Freq Axis Log</div>
+          </div>
+          <label class="switch">
+            <input id="fftLogX" type="checkbox" />
+            <span class="sw-track"></span>
+          </label>
+        </div>
+      </div>
       <canvas id="freqCanvas"></canvas>
     </div>
     <div class="bottom-spacer" aria-hidden="true"></div>

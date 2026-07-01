@@ -2,15 +2,18 @@
   const sampleRate = 44100;
   const durationSec = 2.0;
   const FIXED_INPUT_GAIN_DB = 0;
-  const FFT_DB_MIN = -60;
+  const FFT_DB_MIN_DEFAULT = -60;
   const FFT_DB_MAX = 10;
   const HPF_CUTOFF_HZ = 50;
+  const SOURCE_LABELS = ["正弦波", "合成单音", "合成和弦", "文件1", "文件2", "文件3"];
 
   const $ = (id) => document.getElementById(id);
   const els = {
-    sourceType: $("sourceType"), sineFreq: $("sineFreq"), sineFreqNum: $("sineFreqNum"),
-    inputFileChord: $("inputFileChord"), inputFileSingle: $("inputFileSingle"),
-    chordStatus: $("chordStatus"), singleStatus: $("singleStatus"),
+    sourceKnob: $("sourceKnob"), sourceKnobIdx: $("sourceKnobIdx"), sourceKnobLabel: $("sourceKnobLabel"),
+    snap220: $("snap220"), snap440: $("snap440"),
+    sineFreq: $("sineFreq"), sineFreqNum: $("sineFreqNum"),
+    inputFile1: $("inputFile1"), inputFile2: $("inputFile2"), inputFile3: $("inputFile3"),
+    fileStatus1: $("fileStatus1"), fileStatus2: $("fileStatus2"), fileStatus3: $("fileStatus3"),
     gainDb: $("gainDb"), gainDbNum: $("gainDbNum"), gainRow: $("gainRow"),
     distOn: $("distOn"), algo: $("algo"),
     threshold: $("threshold"), thresholdNum: $("thresholdNum"),
@@ -23,8 +26,8 @@
     btnPlayOut: $("btnPlayOut"), btnStop: $("btnStop"),
     timeCanvas: $("timeCanvas"), timeOutCanvas: $("timeOutCanvas"), freqCanvas: $("freqCanvas"),
     threshRow: $("threshRow"), asymRow: $("asymRow"),
-    fftModeEco: $("fftModeEco"), fftModeBalanced: $("fftModeBalanced"), fftModeDetail: $("fftModeDetail"),
     fftMaxHz: $("fftMaxHz"), fftMaxHzNum: $("fftMaxHzNum"), fftLogX: $("fftLogX"),
+    fftDbMin: $("fftDbMin"), fftDbMinNum: $("fftDbMinNum"),
     playbackGainDb: $("playbackGainDb"), playbackGainDbNum: $("playbackGainDbNum"),
   };
 
@@ -34,7 +37,7 @@
 
   const state = {
     inputRaw: null, inputGained: null, preClip: null, output: null,
-    chordBuffer: null, singleBuffer: null,
+    fileBuffers: [null, null, null],
     audioCtx: null, sourceNode: null,
   };
 
@@ -85,17 +88,8 @@
   function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
   function linToDb(x) { return 20 * Math.log10(Math.max(1e-9, x)); }
 
-  function getFftMode() {
-    if (els.fftModeEco?.checked) return "eco";
-    if (els.fftModeDetail?.checked) return "detail";
-    return "balanced";
-  }
-
   function getFftConfig() {
-    const mode = getFftMode();
-    if (mode === "eco") return { fftLen: 1024, hop: 512, oversample: 1 };
-    if (mode === "detail") return { fftLen: 4096, hop: 2048, oversample: 4 };
-    return { fftLen: 2048, hop: 1024, oversample: 2 };
+    return { fftLen: 4096, hop: 2048, oversample: 4 }; // fixed DETAIL mode
   }
 
   function getThresholds(algo, userTh, asymOn) {
@@ -324,14 +318,15 @@
   }
 
   // ─── File loading ─────────────────────────────────────────────────────────
-  function toMonoFloat32(audioBuffer) {
+  function toMonoFloat32(audioBuffer, maxSeconds = 10) {
     const len = audioBuffer.length, channels = audioBuffer.numberOfChannels;
     const out = new Float32Array(len);
     for (let ch = 0; ch < channels; ch++) {
       const d = audioBuffer.getChannelData(ch);
       for (let i = 0; i < len; i++) out[i] += d[i] / channels;
     }
-    return resampleLinear(out, audioBuffer.sampleRate, sampleRate, Math.floor(sampleRate * durationSec));
+    const outLen = Math.floor(sampleRate * Math.min(maxSeconds, audioBuffer.duration));
+    return resampleLinear(out, audioBuffer.sampleRate, sampleRate, outLen);
   }
   function resampleLinear(input, inSR, outSR, outLen) {
     if (inSR === outSR && input.length >= outLen) return input.slice(0, outLen);
@@ -343,12 +338,12 @@
     }
     return out;
   }
-  async function loadFile(file) {
+  async function loadFile(file, maxSeconds = 10) {
     if (!file) return null;
     const arr = await file.arrayBuffer();
     const ac = ensureAudioCtx();
     const decoded = await ac.decodeAudioData(arr.slice(0));
-    return toMonoFloat32(decoded);
+    return toMonoFloat32(decoded, maxSeconds);
   }
 
   // ─── FFT ──────────────────────────────────────────────────────────────────
@@ -470,23 +465,25 @@
     }
   }
 
-  function drawAxisLabelsFreq(ctx, area, maxHz, logX) {
+  function drawAxisLabelsFreq(ctx, area, maxHz, logX, dbMin, xMinHz) {
     ctx.fillStyle = "#9eb1cc";
     ctx.font = "10px system-ui, sans-serif";
-    ctx.fillText("Magnitude (dBFS)", 6, area.t + 10);
+    ctx.fillText("Magnitude (dBr, ref=input peak)", 6, area.t + 10);
     ctx.fillText(`Frequency (Hz) ${logX ? "[log]" : "[linear]"}`, area.l + area.w - 102, area.t + area.h + 24);
-    const yTicks = [-60, -50, -40, -30, -20, -10, 0];
+    const yTicks = [dbMin, dbMin + 10, dbMin + 20, dbMin + 30, dbMin + 40, dbMin + 50, 0].filter((v, i, a) => v <= 0 && a.indexOf(v) === i);
     for (const t of yTicks) {
-      const y = area.t + area.h * (1 - (t - FFT_DB_MIN) / (FFT_DB_MAX - FFT_DB_MIN));
+      const y = area.t + area.h * (1 - (t - dbMin) / (FFT_DB_MAX - dbMin));
       ctx.fillText(`${t}`, area.l - 30, y + 3);
     }
-    const xTicks = logX ? [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000].filter(v => v <= maxHz) : [0, maxHz * 0.25, maxHz * 0.5, maxHz * 0.75, maxHz];
-    const minLogHz = 20;
+    const xTicks = logX
+      ? [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000].filter(v => v >= xMinHz && v <= maxHz)
+      : [xMinHz, xMinHz + (maxHz - xMinHz) * 0.25, xMinHz + (maxHz - xMinHz) * 0.5, xMinHz + (maxHz - xMinHz) * 0.75, maxHz];
+    const minLogHz = xMinHz;
     for (const f0 of xTicks) {
       const f = Math.max(minLogHz, f0);
       const x = logX
         ? area.l + area.w * (Math.log10(f / minLogHz) / Math.log10(maxHz / minLogHz))
-        : area.l + area.w * (f / maxHz);
+        : area.l + area.w * ((f - xMinHz) / (maxHz - xMinHz));
       ctx.fillText(`${f}`, x - 10, area.t + area.h + 14);
     }
   }
@@ -538,37 +535,57 @@
     const area = { l: 56, t: 26, w: Math.max(10, w - 76), h: Math.max(10, h - 60) };
     drawGrid(ctxFreq, area, 10, 8);
     const maxHz = +els.fftMaxHz.value;
+    const minHz = 50;
     const logX = !!els.fftLogX.checked;
+    const dbMin = +els.fftDbMin.value;
     const cfg = getFftConfig();
     const inMag = fftMagAveraged(inSig, cfg.fftLen, cfg.hop);
     const outMag = fftMagAveraged(outSig, cfg.fftLen, cfg.hop);
-    const maxBins = Math.max(2, Math.floor((maxHz / (sampleRate / 2)) * inMag.length));
-    const minLogHz = 20;
-    const toY = db => area.t + area.h * (1 - (db - FFT_DB_MIN) / (FFT_DB_MAX - FFT_DB_MIN));
+    const startBin = Math.max(1, Math.floor((minHz / (sampleRate / 2)) * inMag.length));
+    const maxBins = Math.max(startBin + 2, Math.floor((maxHz / (sampleRate / 2)) * inMag.length));
+    let refPeak = 1e-9;
+    for (let i = startBin; i < maxBins; i++) refPeak = Math.max(refPeak, inMag[i]);
+    const minLogHz = minHz;
+    const toY = db => area.t + area.h * (1 - (db - dbMin) / (FFT_DB_MAX - dbMin));
     const drawMag = (mag, color) => {
       ctxFreq.strokeStyle = color; ctxFreq.lineWidth = 1.5; ctxFreq.beginPath();
-      for (let i = 0; i < maxBins; i++) {
+      let first = true;
+      for (let i = startBin; i < maxBins; i++) {
         const freq = (i / (mag.length - 1)) * (sampleRate / 2);
         const fx = Math.max(minLogHz, freq);
         const x = logX
           ? area.l + area.w * (Math.log10(fx / minLogHz) / Math.log10(maxHz / minLogHz))
-          : area.l + area.w * (freq / maxHz);
-        const y = toY(clamp(linToDb(mag[i]), FFT_DB_MIN, FFT_DB_MAX));
-        i===0 ? ctxFreq.moveTo(x,y) : ctxFreq.lineTo(x,y);
+          : area.l + area.w * ((freq - minHz) / (maxHz - minHz));
+        const relDb = linToDb(mag[i] / refPeak);
+        const y = toY(clamp(relDb, dbMin, FFT_DB_MAX));
+        first ? ctxFreq.moveTo(x, y) : ctxFreq.lineTo(x, y);
+        first = false;
       }
       ctxFreq.stroke();
     };
     drawMag(inMag,  "rgba(0,230,110,0.9)");
     drawMag(outMag, "rgba(90,160,255,0.9)");
-    drawAxisLabelsFreq(ctxFreq, area, maxHz, logX);
+    drawAxisLabelsFreq(ctxFreq, area, maxHz, logX, dbMin, minHz);
   }
 
   // ─── Render pipeline ──────────────────────────────────────────────────────
+  function getSourceMode() {
+    return +els.sourceKnobIdx.value;
+  }
+
+  function updateSourceKnobUI() {
+    const idx = getSourceMode();
+    const deg = -130 + idx * (260 / 5);
+    els.sourceKnob.style.transform = `rotate(${deg}deg)`;
+    els.sourceKnobLabel.textContent = SOURCE_LABELS[idx] || SOURCE_LABELS[0];
+  }
+
   async function getInputSignal() {
-    const mode = els.sourceType.value;
-    if (mode === "guitar_chord")  return state.chordBuffer  || generateGuitarChord();
-    if (mode === "guitar_single") return state.singleBuffer || generateGuitarSingle();
-    return generateSine(+els.sineFreq.value);
+    const mode = getSourceMode();
+    if (mode === 1) return generateGuitarSingle();
+    if (mode === 2) return generateGuitarChord();
+    if (mode >= 3) return state.fileBuffers[mode - 3] || generateSine(+els.sineFreq.value);
+    return generateSine(+els.sineFreq.value); // mode 0
   }
 
   async function renderAll() {
@@ -608,35 +625,33 @@
   }
 
   async function initFileHandlers() {
-    els.inputFileChord.addEventListener("change", async () => {
-      try {
-        const f = els.inputFileChord.files?.[0] || null;
-        state.chordBuffer = await loadFile(f);
-        if (state.chordBuffer) {
-          els.chordStatus.textContent = `已加载: ${f.name}`;
-          els.sourceType.value = "guitar_chord";
-        } else {
-          els.chordStatus.textContent = "未加载外部文件";
+    const fileInputs = [els.inputFile1, els.inputFile2, els.inputFile3];
+    const statusEls = [els.fileStatus1, els.fileStatus2, els.fileStatus3];
+    fileInputs.forEach((input, i) => {
+      input?.addEventListener("change", async () => {
+        try {
+          const f = input.files?.[0] || null;
+          if (!f) {
+            statusEls[i].textContent = "未加载外部文件";
+            state.fileBuffers[i] = null;
+            renderAll();
+            return;
+          }
+          const buf = await loadFile(f, 10);
+          if (buf && buf.length > 0) {
+            state.fileBuffers[i] = buf;
+            const sec = (buf.length / sampleRate).toFixed(2);
+            statusEls[i].textContent = `已加载: ${f.name} (${sec}s, 最长10s)`;
+            els.sourceKnobIdx.value = String(3 + i);
+            updateSourceKnobUI();
+          } else {
+            statusEls[i].textContent = "未加载外部文件";
+          }
+          renderAll();
+        } catch (e) {
+          statusEls[i].textContent = "加载失败：文件格式不支持";
         }
-        renderAll();
-      } catch (e) {
-        els.chordStatus.textContent = "加载失败：文件格式不支持";
-      }
-    });
-    els.inputFileSingle.addEventListener("change", async () => {
-      try {
-        const f = els.inputFileSingle.files?.[0] || null;
-        state.singleBuffer = await loadFile(f);
-        if (state.singleBuffer) {
-          els.singleStatus.textContent = `已加载: ${f.name}`;
-          els.sourceType.value = "guitar_single";
-        } else {
-          els.singleStatus.textContent = "未加载外部文件";
-        }
-        renderAll();
-      } catch (e) {
-        els.singleStatus.textContent = "加载失败：文件格式不支持";
-      }
+      });
     });
   }
 
@@ -647,13 +662,30 @@
     bindPair(els.timeWindowMs, els.timeWindowMsNum);
     bindPair(els.timeOffsetMs, els.timeOffsetMsNum);
     bindPair(els.fftMaxHz, els.fftMaxHzNum);
+    bindPair(els.fftDbMin, els.fftDbMinNum);
     bindPair(els.playbackGainDb, els.playbackGainDbNum);
 
     els.algo.addEventListener("change", () => { updateAlgoUI(); renderAll(); });
-    [els.sourceType, els.distOn, els.asymToggle, els.splitView, els.fftLogX]
+    [els.distOn, els.asymToggle, els.splitView, els.fftLogX]
       .forEach(el => el.addEventListener("change", renderAll));
-    [els.fftModeEco, els.fftModeBalanced, els.fftModeDetail]
-      .forEach(el => el?.addEventListener("change", renderAll));
+    els.sourceKnob.addEventListener("click", () => {
+      els.sourceKnobIdx.value = String((+els.sourceKnobIdx.value + 1) % 6);
+      updateSourceKnobUI();
+      renderAll();
+    });
+    els.sourceKnob.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+        els.sourceKnobIdx.value = String(Math.min(5, +els.sourceKnobIdx.value + 1));
+        updateSourceKnobUI(); renderAll();
+      }
+      if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+        els.sourceKnobIdx.value = String(Math.max(0, +els.sourceKnobIdx.value - 1));
+        updateSourceKnobUI(); renderAll();
+      }
+    });
+    els.sourceKnobIdx.addEventListener("input", () => { updateSourceKnobUI(); renderAll(); });
+    els.snap220?.addEventListener("click", () => { els.sineFreq.value = "220"; els.sineFreqNum.value = "220"; renderAll(); });
+    els.snap440?.addEventListener("click", () => { els.sineFreq.value = "440"; els.sineFreqNum.value = "440"; renderAll(); });
 
     els.btnRender.addEventListener("click", renderAll);
     els.btnPlayIn.addEventListener("click", () => state.inputGained && play(state.inputGained));
@@ -670,6 +702,9 @@
     bindEvents();
     await initFileHandlers();
     updateAlgoUI();
+    els.fftDbMin.value = String(FFT_DB_MIN_DEFAULT);
+    els.fftDbMinNum.value = String(FFT_DB_MIN_DEFAULT);
+    updateSourceKnobUI();
     requestAnimationFrame(() => resizeAll());
   }
 
