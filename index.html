@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Distortion Visual Lab</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #101215; color: #eef1f6; }
+    .wrap { display: grid; grid-template-columns: 320px 1fr; min-height: 100vh; }
+    .panel { padding: 16px; border-right: 1px solid #2b313a; background: #151922; }
+    .panel h2 { margin: 0 0 10px; font-size: 18px; }
+    .panel h3 { margin: 12px 0 6px; font-size: 13px; color: #9cb6d8; }
+    .row { margin-bottom: 8px; }
+    label { display: block; font-size: 12px; color: #cfd8e3; margin-bottom: 3px; }
+    input, select, button { width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid #3c4657; border-radius: 6px; background: #1f2531; color: #edf2fb; }
+    input[type="range"] { padding: 0; }
+    .inline { display: grid; grid-template-columns: 1fr 76px; gap: 8px; align-items: center; }
+    .inline input[type="number"] { width: 76px; }
+    .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    button { cursor: pointer; background: #274065; }
+    button:hover { background: #345687; }
+    .stage { display: grid; grid-template-rows: 1fr 1fr; gap: 8px; padding: 8px; }
+    .card { position: relative; background: #0f131a; border: 1px solid #263040; border-radius: 8px; overflow: hidden; }
+    .card h4 { position: absolute; margin: 0; top: 8px; left: 10px; font-size: 12px; color: #c8d4e8; z-index: 1; background: rgba(10,12,16,0.6); padding: 2px 6px; border-radius: 4px; }
+    canvas { width: 100%; height: 100%; display: block; }
+    .legend { font-size: 11px; color: #9eb1cc; margin-top: 6px; line-height: 1.4; }
+    .small { font-size: 11px; color: #8ea4c7; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <aside class="panel">
+      <h2>Distortion Visualizer</h2>
+      <div class="small">GitHub Pages demo.</div>
+
+      <h3>输入源</h3>
+      <div class="row">
+        <label for="sourceType">Source Type</label>
+        <select id="sourceType">
+          <option value="sine">Sine Wave</option>
+          <option value="guitar_chord">Guitar Chord (sample)</option>
+          <option value="guitar_single">Guitar Single Pick (sample)</option>
+        </select>
+      </div>
+      <div class="row inline">
+        <div>
+          <label for="sineFreq">Sine Freq (Hz)</label>
+          <input id="sineFreq" type="range" min="80" max="1200" step="1" value="220" />
+        </div>
+        <input id="sineFreqNum" type="number" min="80" max="1200" step="1" value="220" />
+      </div>
+      <div class="row">
+        <label for="inputFileChord">Guitar Chord Audio (optional file)</label>
+        <input id="inputFileChord" type="file" accept="audio/*" />
+      </div>
+      <div class="row">
+        <label for="inputFileSingle">Guitar Single Audio (optional file)</label>
+        <input id="inputFileSingle" type="file" accept="audio/*" />
+      </div>
+
+      <h3>增益与失真</h3>
+      <div class="row inline">
+        <div>
+          <label for="gainDb">Input Gain (dB)</label>
+          <input id="gainDb" type="range" min="-12" max="36" step="0.1" value="12" />
+        </div>
+        <input id="gainDbNum" type="number" min="-12" max="36" step="0.1" value="12" />
+      </div>
+      <div class="row">
+        <label for="distOn">Distortion</label>
+        <select id="distOn">
+          <option value="on">On</option>
+          <option value="off">Off (Gain only)</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="algo">Algorithm</label>
+        <select id="algo">
+          <option value="hardclip">Hard Clip</option>
+          <option value="softclip">Soft Clip (tanh)</option>
+          <option value="distortion">Distortion (atan)</option>
+          <option value="overdrive">Overdrive (soft knee)</option>
+          <option value="mosfet">MOSFET-like asym soft/hard</option>
+          <option value="fuzz">Fuzz</option>
+          <option value="rectifier">Rectifier</option>
+        </select>
+      </div>
+      <div class="row inline">
+        <div>
+          <label for="threshold">Clip Threshold</label>
+          <input id="threshold" type="range" min="0.1" max="1.0" step="0.01" value="0.6" />
+        </div>
+        <input id="thresholdNum" type="number" min="0.1" max="1.0" step="0.01" value="0.6" />
+      </div>
+      <div class="row inline">
+        <div>
+          <label for="drive">Drive (algorithm intensity)</label>
+          <input id="drive" type="range" min="0" max="30" step="0.1" value="12" />
+        </div>
+        <input id="driveNum" type="number" min="0" max="30" step="0.1" value="12" />
+      </div>
+      <div class="row inline">
+        <div>
+          <label for="asym">Asymmetry (-1 ~ 1)</label>
+          <input id="asym" type="range" min="-1" max="1" step="0.01" value="0" />
+        </div>
+        <input id="asymNum" type="number" min="-1" max="1" step="0.01" value="0" />
+      </div>
+
+      <div class="btns">
+        <button id="btnRender">Render</button>
+        <button id="btnPlayIn">Play Input</button>
+      </div>
+      <div class="btns">
+        <button id="btnPlayOut">Play Output</button>
+        <button id="btnStop">Stop</button>
+      </div>
+
+      <div class="legend">
+        颜色：<br>
+        绿色 = 输入（含 Gain）<br>
+        蓝色 = 输出（失真后）<br>
+        虚线 = ±削波阈值（含 asymmetric）<br>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <div class="card">
+        <h4>时域：输入 vs 输出（含阈值虚线）</h4>
+        <canvas id="timeCanvas"></canvas>
+      </div>
+      <div class="card">
+        <h4>频域：输入 vs 输出（FFT 幅频）</h4>
+        <canvas id="freqCanvas"></canvas>
+      </div>
+    </main>
+  </div>
+
+  <script src="distortion-lab.js"></script>
+</body>
+</html>
