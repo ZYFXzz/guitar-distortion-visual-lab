@@ -97,10 +97,10 @@
       <summary>输入区域（可折叠）</summary>
       <div class="row knob-wrap">
       <label>输入选择旋钮（6挡）</label>
-      <span class="hint">点击圆钮切换：正弦波 / 合成单音 / 合成和弦 / 文件1 / 文件2 / 文件3</span>
+      <span class="hint">拖动/滚轮调节，7挡吸附：无输入 / 正弦波 / 合成单音 / 合成和弦 / 文件1 / 文件2 / 文件3</span>
       <div id="sourceKnob" class="knob-ui" role="button" aria-label="source knob" tabindex="0"></div>
       <div id="sourceKnobLabel" class="knob-caption">正弦波</div>
-      <input id="sourceKnobIdx" type="range" min="0" max="5" step="1" value="0" style="display:none;" />
+      <input id="sourceKnobIdx" type="range" min="0" max="6" step="0.01" value="1" style="display:none;" />
       </div>
       <div class="row inline">
       <div>
@@ -239,22 +239,29 @@
         <div class="scope-controls">
           <div class="row inline">
             <div>
-              <label for="timeWindowMsUi">Time Window (ms)</label>
+              <label for="timeWindowMsUi">Time Window 时间窗口 (ms)</label>
               <input id="timeWindowMsUi" type="range" min="5" max="200" step="1" value="40" />
             </div>
             <input id="timeWindowMsUiNum" type="number" min="5" max="200" step="1" value="40" />
           </div>
           <div class="row inline">
             <div>
-              <label for="timeOffsetMsUi">Time Offset (ms)</label>
+              <label for="timeOffsetMsUi">Time Offset 时间偏移 (ms)</label>
               <input id="timeOffsetMsUi" type="range" min="0" max="9900" step="1" value="0" />
             </div>
             <input id="timeOffsetMsUiNum" type="number" min="0" max="9900" step="1" value="0" />
           </div>
           <div class="switch-row">
-            <div class="switch-label-wrap"><div class="switch-label">Split View</div></div>
+            <div class="switch-label-wrap"><div class="switch-label">Split View 分层显示</div></div>
             <label class="switch">
               <input id="splitViewUi" type="checkbox" />
+              <span class="sw-track"></span>
+            </label>
+          </div>
+          <div class="switch-row">
+            <div class="switch-label-wrap"><div class="switch-label">Threshold 阈值线（主窗口）</div></div>
+            <label class="switch">
+              <input id="showThreshMainUi" type="checkbox" checked />
               <span class="sw-track"></span>
             </label>
           </div>
@@ -263,6 +270,15 @@
       </div>
       <div class="card">
         <h4>输出波形（单独显示）</h4>
+        <div class="scope-controls" style="width: 220px;">
+          <div class="switch-row">
+            <div class="switch-label-wrap"><div class="switch-label">Threshold 阈值线（输出窗）</div></div>
+            <label class="switch">
+              <input id="showThreshOutUi" type="checkbox" checked />
+              <span class="sw-track"></span>
+            </label>
+          </div>
+        </div>
         <canvas id="timeOutCanvas"></canvas>
       </div>
     </div>
@@ -271,21 +287,21 @@
       <div class="freq-controls">
         <div class="row inline">
           <div>
-            <label for="fftMaxHz">FFT Max Hz</label>
+            <label for="fftMaxHz">FFT Max Hz 频率上限</label>
             <input id="fftMaxHz" type="range" min="5000" max="20000" step="100" value="5000" />
           </div>
           <input id="fftMaxHzNum" type="number" min="5000" max="20000" step="100" value="5000" />
         </div>
         <div class="row inline">
           <div>
-            <label for="fftDbMin">FFT Min dB</label>
+            <label for="fftDbMin">FFT Min dB 幅度下限</label>
             <input id="fftDbMin" type="range" min="-100" max="-40" step="1" value="-60" />
           </div>
           <input id="fftDbMinNum" type="number" min="-100" max="-40" step="1" value="-60" />
         </div>
         <div class="switch-row">
           <div class="switch-label-wrap">
-            <div class="switch-label">Freq Axis Log</div>
+            <div class="switch-label">Freq Axis Log 对数频轴</div>
           </div>
           <label class="switch">
             <input id="fftLogX" type="checkbox" />

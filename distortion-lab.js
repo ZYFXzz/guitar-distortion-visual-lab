@@ -5,7 +5,7 @@
   const FFT_DB_MIN_DEFAULT = -60;
   const FFT_DB_MAX = 10;
   const HPF_CUTOFF_HZ = 50;
-  const SOURCE_LABELS = ["正弦波", "合成单音", "合成和弦", "文件1", "文件2", "文件3"];
+  const SOURCE_LABELS = ["无输入", "正弦波", "合成单音", "合成和弦", "文件1", "文件2", "文件3"];
 
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -23,6 +23,8 @@
     timeWindowMs: $("timeWindowMsUi") || $("timeWindowMs"), timeWindowMsNum: $("timeWindowMsUiNum") || $("timeWindowMsNum"),
     timeOffsetMs: $("timeOffsetMsUi") || $("timeOffsetMs"), timeOffsetMsNum: $("timeOffsetMsUiNum") || $("timeOffsetMsNum"),
     splitView: $("splitViewUi") || $("splitView"),
+    showThreshMain: $("showThreshMainUi"),
+    showThreshOut: $("showThreshOutUi"),
     btnRender: $("btnRender"), btnPlayIn: $("btnPlayIn"),
     btnPlayOut: $("btnPlayOut"), btnStop: $("btnStop"),
     timeCanvas: $("timeCanvas"), timeOutCanvas: $("timeOutCanvas"), freqCanvas: $("freqCanvas"),
@@ -459,8 +461,8 @@
   function drawAxisLabelsTime(ctx, area, windowMs, yScale) {
     ctx.fillStyle = "#9eb1cc";
     ctx.font = "10px system-ui, sans-serif";
-    ctx.fillText("Voltage (norm)", 6, area.t + 10);
-    ctx.fillText("Time (ms)", area.l + area.w - 48, area.t + area.h + 24);
+    ctx.fillText("电压/幅度 Voltage (norm)", 6, area.t + 10);
+    ctx.fillText("时间 Time (ms)", area.l + area.w - 72, area.t + area.h + 24);
     ctx.fillText(`+${yScale.toFixed(1)}`, area.l - 32, area.t + 4);
     ctx.fillText("0", area.l - 16, area.t + area.h * 0.5 + 3);
     ctx.fillText(`-${yScale.toFixed(1)}`, area.l - 34, area.t + area.h - 2);
@@ -474,8 +476,8 @@
   function drawAxisLabelsFreq(ctx, area, maxHz, logX, dbMin, xMinHz) {
     ctx.fillStyle = "#9eb1cc";
     ctx.font = "10px system-ui, sans-serif";
-    ctx.fillText("Magnitude (dBr, ref=input peak)", 6, area.t + 10);
-    ctx.fillText(`Frequency (Hz) ${logX ? "[log]" : "[linear]"}`, area.l + area.w - 102, area.t + area.h + 24);
+    ctx.fillText("幅度 Magnitude (dBr, 参考=输入峰值)", 6, area.t + 10);
+    ctx.fillText(`频率 Frequency (Hz) ${logX ? "[log]" : "[linear]"}`, area.l + area.w - 132, area.t + area.h + 24);
     const yTicks = [dbMin, dbMin + 10, dbMin + 20, dbMin + 30, dbMin + 40, dbMin + 50, 0].filter((v, i, a) => v <= 0 && a.indexOf(v) === i);
     for (const t of yTicks) {
       const y = area.t + area.h * (1 - (t - dbMin) / (FFT_DB_MAX - dbMin));
@@ -501,21 +503,22 @@
     drawGrid(ctxTime, fullArea, 10, 8);
     const {start, end} = getTimeWindow(Math.min(inSig.length, outSig.length));
     const windowMs = +els.timeWindowMs.value;
+    const showThreshMain = els.showThreshMain ? !!els.showThreshMain.checked : true;
     if (els.splitView.checked) {
       const half = fullArea.h * 0.5;
       const topArea = { l: fullArea.l, t: fullArea.t, w: fullArea.w, h: half };
       const botArea = { l: fullArea.l, t: fullArea.t + half, w: fullArea.w, h: half };
       ctxTime.strokeStyle = "rgba(100,120,150,0.4)"; ctxTime.lineWidth=1;
       ctxTime.beginPath(); ctxTime.moveTo(fullArea.l, fullArea.t + half); ctxTime.lineTo(fullArea.l + fullArea.w, fullArea.t + half); ctxTime.stroke();
-      drawThreshLines(ctxTime, topArea, pos, neg, yS);
+      if (showThreshMain) drawThreshLines(ctxTime, topArea, pos, neg, yS);
       drawWave(ctxTime, topArea, inSig,  "rgba(0,230,110,0.9)",  1.4, start,end, yS);
       ctxTime.setLineDash([6, 4]);
       drawWave(ctxTime, topArea, preClipSig, "rgba(235,220,90,0.9)", 1.2, start, end, yS);
       ctxTime.setLineDash([]);
-      drawThreshLines(ctxTime, botArea, pos, neg, yS);
+      if (showThreshMain) drawThreshLines(ctxTime, botArea, pos, neg, yS);
       drawWave(ctxTime, botArea, outSig, "rgba(90,160,255,0.9)", 1.5, start,end, yS);
     } else {
-      drawThreshLines(ctxTime, fullArea, pos, neg, yS);
+      if (showThreshMain) drawThreshLines(ctxTime, fullArea, pos, neg, yS);
       drawWave(ctxTime, fullArea, inSig,  "rgba(0,230,110,0.9)",  1.4, start,end, yS);
       ctxTime.setLineDash([6, 4]);
       drawWave(ctxTime, fullArea, preClipSig, "rgba(235,220,90,0.9)", 1.2, start, end, yS);
@@ -531,7 +534,8 @@
     const area = { l: 52, t: 26, w: Math.max(10, w - 68), h: Math.max(10, h - 58) };
     drawGrid(ctxTimeOut, area, 8, 8);
     const {start, end} = getTimeWindow(outSig.length);
-    drawThreshLines(ctxTimeOut, area, pos, neg, yS);
+    const showThreshOut = els.showThreshOut ? !!els.showThreshOut.checked : true;
+    if (showThreshOut) drawThreshLines(ctxTimeOut, area, pos, neg, yS);
     drawWave(ctxTimeOut, area, outSig, "rgba(90,160,255,0.9)", 1.7, start,end, yS);
     drawAxisLabelsTime(ctxTimeOut, area, +els.timeWindowMs.value, yS);
   }
@@ -576,19 +580,23 @@
 
   // ─── Render pipeline ──────────────────────────────────────────────────────
   function getSourceMode() {
-    const v = Number.parseInt(els.sourceKnobIdx.value, 10);
-    return Number.isFinite(v) ? clamp(v, 0, 5) : 0;
+    const v = Number.parseFloat(els.sourceKnobIdx.value);
+    return Number.isFinite(v) ? clamp(Math.round(v), 0, 6) : 0;
   }
 
   function setSourceMode(idx, rerender = true) {
-    els.sourceKnobIdx.value = String(clamp(Math.round(idx), 0, 5));
+    els.sourceKnobIdx.value = String(clamp(idx, 0, 6));
     updateSourceKnobUI();
     if (rerender) renderAll();
   }
 
   function updateSourceKnobUI() {
+    const raw = clamp(parseFloat(els.sourceKnobIdx.value) || 0, 0, 6);
+    const nearest = Math.round(raw);
+    const snapped = Math.abs(raw - nearest) < 0.22 ? nearest : raw; // detent attraction
+    if (snapped !== raw) els.sourceKnobIdx.value = String(snapped);
     const idx = getSourceMode();
-    const deg = -130 + idx * (260 / 5);
+    const deg = -130 + snapped * (260 / 6);
     els.sourceKnob.style.transform = `rotate(${deg}deg)`;
     els.sourceKnobLabel.textContent = SOURCE_LABELS[idx] || SOURCE_LABELS[0];
   }
@@ -605,10 +613,11 @@
 
   async function getInputSignal() {
     const mode = getSourceMode();
-    if (mode === 1) return generateGuitarSingle();
-    if (mode === 2) return generateGuitarChord();
-    if (mode >= 3) return state.fileBuffers[mode - 3] || generateSine(+els.sineFreq.value);
-    return generateSine(+els.sineFreq.value); // mode 0
+    if (mode === 0) return new Float32Array(Math.floor(sampleRate * durationSec)); // no input
+    if (mode === 2) return generateGuitarSingle();
+    if (mode === 3) return generateGuitarChord();
+    if (mode >= 4) return state.fileBuffers[mode - 4] || generateSine(+els.sineFreq.value);
+    return generateSine(+els.sineFreq.value); // mode 1
   }
 
   async function renderAll() {
@@ -669,7 +678,7 @@
             state.fileBuffers[i] = buf;
             const sec = (buf.length / sampleRate).toFixed(2);
             statusEls[i].textContent = `已加载: ${f.name} (${sec}s, 最长30s)`;
-            setSourceMode(3 + i, false);
+            setSourceMode(4 + i, false);
           } else {
             statusEls[i].textContent = "未加载外部文件";
           }
@@ -695,9 +704,18 @@
     bindPair(els.playbackGainDb, els.playbackGainDbNum);
 
     els.algo.addEventListener("change", () => { updateAlgoUI(); renderAll(); });
-    [els.distOn, els.asymToggle, els.splitView, els.fftLogX]
+    [els.distOn, els.asymToggle, els.splitView, els.fftLogX, els.showThreshMain, els.showThreshOut]
       .forEach(el => el.addEventListener("change", renderAll));
-    els.sourceKnob.addEventListener("click", () => setSourceMode((getSourceMode() + 1) % 6));
+    let sourceDragY = null;
+    els.sourceKnob.addEventListener("mousedown", (e) => { sourceDragY = e.clientY; });
+    window.addEventListener("mousemove", (e) => {
+      if (sourceDragY === null) return;
+      const dy = sourceDragY - e.clientY;
+      sourceDragY = e.clientY;
+      const v = (parseFloat(els.sourceKnobIdx.value) || 0) + dy * 0.03;
+      setSourceMode(v);
+    });
+    window.addEventListener("mouseup", () => { sourceDragY = null; });
     els.sourceKnob.addEventListener("keydown", (e) => {
       if (e.key === "ArrowRight" || e.key === "ArrowUp") {
         setSourceMode(getSourceMode() + 1);
@@ -706,8 +724,8 @@
         setSourceMode(getSourceMode() - 1);
       }
     });
-    els.sourceKnob.addEventListener("wheel", (e) => { e.preventDefault(); setSourceMode(getSourceMode() + (e.deltaY > 0 ? 1 : -1)); }, { passive: false });
-    els.sourceKnobIdx.addEventListener("input", () => setSourceMode(getSourceMode()));
+    els.sourceKnob.addEventListener("wheel", (e) => { e.preventDefault(); setSourceMode((parseFloat(els.sourceKnobIdx.value) || 0) + (e.deltaY > 0 ? -0.35 : 0.35)); }, { passive: false });
+    els.sourceKnobIdx.addEventListener("input", () => { updateSourceKnobUI(); renderAll(); });
 
     // Drive circular knob interactions
     els.drive.addEventListener("input", () => setDriveValue(+els.drive.value));
@@ -749,7 +767,7 @@
     updateAlgoUI();
     els.fftDbMin.value = String(FFT_DB_MIN_DEFAULT);
     els.fftDbMinNum.value = String(FFT_DB_MIN_DEFAULT);
-    setSourceMode(0, false);
+    setSourceMode(1, false);
     setDriveValue(+els.drive.value, false);
     requestAnimationFrame(() => resizeAll());
   }
