@@ -21,6 +21,7 @@ After GitHub Pages is enabled, this project will be available at:
   - Section B: clipping core
   - Section C: tone shaping
 - Tone control for post-clipping voicing
+- Pedal-style Level control (post-circuit output volume)
 - Time-domain overlay (input vs output) with threshold guide lines
 - Frequency-domain overlay (FFT magnitude)
 - Play input and output audio in-browser

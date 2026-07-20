@@ -18,6 +18,7 @@
     gainDb: $("gainDb"), gainDbNum: $("gainDbNum"), gainRow: $("gainRow"),
     distOn: $("distOn"), algo: $("algo"),
     drive: $("drive"), driveNum: $("driveNum"), driveKnob: $("driveKnob"),
+    level: $("level"), levelNum: $("levelNum"),
     stageBoostOn: $("stageBoostOn"), stageClipOn: $("stageClipOn"), stageToneOn: $("stageToneOn"),
     tone: $("tone"), toneNum: $("toneNum"),
     timeWindowMs: $("timeWindowMsUi") || $("timeWindowMs"), timeWindowMsNum: $("timeWindowMsUiNum") || $("timeWindowMsNum"),
@@ -74,6 +75,7 @@
         lpfHzLo: 5600,
       },
       tone: { hpDark: 80, hpBright: 190, lpDark: 2600, lpBright: 7800 },
+      output: { minDb: -40, taper: 1.9, headroom: 1.35, clipSoftness: 1.8 },
     },
     ds1: {
       clip: { kind: "diode_piecewise", pos: 0.7, neg: 0.7, slope: 0.12, driveScale: 0.65, driveBaseDb: 8 },
@@ -88,6 +90,7 @@
         boosterSoftness: 1.2,
       },
       tone: { hpDark: 90, hpBright: 220, lpDark: 2400, lpBright: 9200 },
+      output: { minDb: -42, taper: 1.8, headroom: 1.45, clipSoftness: 1.7 },
     },
   };
 
@@ -210,10 +213,18 @@
     return v;
   }
 
+  function outputLevelGain(levelNorm, outCfg) {
+    const k = clamp(levelNorm, 0, 1);
+    const curved = Math.pow(k, outCfg.taper);
+    const db = outCfg.minDb + (0 - outCfg.minDb) * curved;
+    return dbToLin(db);
+  }
+
   function applyPedalModel(x, cfg, sr) {
     const model = getModel(cfg.algo);
     const driveNorm = clamp(cfg.driveDb / 20, 0, 1);
     const toneNorm = clamp((cfg.tone + 1) * 0.5, 0, 1);
+    const levelNorm = clamp(cfg.level, 0, 1);
     const stageA = x.slice();
     const clipOut = new Float32Array(x.length);
     const y = new Float32Array(x.length);
@@ -252,6 +263,14 @@
       y.set(toned);
     } else {
       y.set(clipOut);
+    }
+
+    if (cfg.distOn) {
+      const levelGain = outputLevelGain(levelNorm, model.output);
+      for (let i = 0; i < y.length; i++) y[i] *= levelGain;
+      for (let i = 0; i < y.length; i++) {
+        y[i] = softClipAsym(y[i], model.output.headroom, model.output.headroom, model.output.clipSoftness);
+      }
     }
 
     return { preClip: stageA, output: y, pos: model.clip.pos, neg: model.clip.neg };
@@ -838,6 +857,7 @@
       algo: els.algo.value,
       distOn: !!els.distOn.checked,
       drive: +els.drive.value,
+      level: +els.level.value,
       stageBoostOn: !!els.stageBoostOn.checked,
       stageClipOn: !!els.stageClipOn.checked,
       stageToneOn: !!els.stageToneOn.checked,
@@ -863,6 +883,9 @@
     els.algo.value = PEDAL_MODELS[s.algo] ? s.algo : "ts808";
     els.distOn.checked = !!s.distOn;
     setDriveValue(+s.drive, false);
+    const levelVal = Number.isFinite(+s.level) ? +s.level : 0.7;
+    els.level.value = String(levelVal);
+    els.levelNum.value = String(levelVal);
     els.stageBoostOn.checked = s.stageBoostOn !== false;
     els.stageClipOn.checked = s.stageClipOn !== false;
     els.stageToneOn.checked = s.stageToneOn !== false;
@@ -959,7 +982,7 @@
       els.gainDbNum.value = FIXED_INPUT_GAIN_DB;
       const cfg = {
         distOn: els.distOn.checked, algo: els.algo.value,
-        driveDb: +els.drive.value, tone: +els.tone.value,
+        driveDb: +els.drive.value, tone: +els.tone.value, level: +els.level.value,
         stageBoostOn: !!els.stageBoostOn.checked,
         stageClipOn: !!els.stageClipOn.checked,
         stageToneOn: !!els.stageToneOn.checked,
@@ -1029,6 +1052,7 @@
     bindPair(els.fftDbMin, els.fftDbMinNum);
     bindPair(els.playbackGainDb, els.playbackGainDbNum);
     bindPair(els.tone, els.toneNum);
+    bindPair(els.level, els.levelNum);
     els.transportPosMs.addEventListener("input", () => { syncOffsetToTransport(); renderAll(); });
     els.transportPosMsNum.addEventListener("input", () => { syncOffsetToTransport(); renderAll(); });
     els.timeOffsetMs.addEventListener("input", () => { syncTransportToOffset(); });
@@ -1184,6 +1208,8 @@
     els.fftDbMinNum.value = String(FFT_DB_MIN_DEFAULT);
     setSourceMode(1, false);
     setDriveValue(+els.drive.value, false);
+    els.level.value = "0.7";
+    els.levelNum.value = "0.7";
     syncDistFootSwitch();
     updateAbStatus();
     updateStageLayout();
@@ -1192,6 +1218,7 @@
       if (els.algoDisclaimerToast) els.algoDisclaimerToast.style.display = "none";
     }, 3000);
     requestAnimationFrame(() => resizeAll());
+    await renderAll();
   }
 
   boot();
