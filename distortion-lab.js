@@ -17,9 +17,9 @@
     fileStatus1: $("fileStatus1"), fileStatus2: $("fileStatus2"), fileStatus3: $("fileStatus3"),
     gainDb: $("gainDb"), gainDbNum: $("gainDbNum"), gainRow: $("gainRow"),
     distOn: $("distOn"), algo: $("algo"),
-    threshold: $("threshold"), thresholdNum: $("thresholdNum"),
     drive: $("drive"), driveNum: $("driveNum"), driveKnob: $("driveKnob"),
-    asymToggle: $("asymToggle"),
+    stageBoostOn: $("stageBoostOn"), stageClipOn: $("stageClipOn"), stageToneOn: $("stageToneOn"),
+    tone: $("tone"), toneNum: $("toneNum"),
     timeWindowMs: $("timeWindowMsUi") || $("timeWindowMs"), timeWindowMsNum: $("timeWindowMsUiNum") || $("timeWindowMsNum"),
     timeOffsetMs: $("timeOffsetMsUi") || $("timeOffsetMs"), timeOffsetMsNum: $("timeOffsetMsUiNum") || $("timeOffsetMsNum"),
     splitView: $("splitViewUi") || $("splitView"),
@@ -35,7 +35,6 @@
     timeCanvas: $("timeCanvas"), timeOutCanvas: $("timeOutCanvas"), freqCanvas: $("freqCanvas"),
     stage: $("stage"), timeMainCard: $("timeMainCard"), timeOutCard: $("timeOutCard"), freqCard: $("freqCard"),
     timeRow: $("timeRow"),
-    threshRow: $("threshRow"), asymRow: $("asymRow"),
     fftMaxHz: $("fftMaxHz"), fftMaxHzNum: $("fftMaxHzNum"), fftLogX: $("fftLogX"),
     fftDbMin: $("fftDbMin"), fftDbMinNum: $("fftDbMinNum"),
     playbackGainDb: $("playbackGainDb"), playbackGainDbNum: $("playbackGainDbNum"),
@@ -63,46 +62,33 @@
     snapshots: { A: null, B: null },
   };
 
-  // ─── Fixed clipping thresholds modelled after real hardware ───────────────
-  // All values are normalised to a ±1 signal range before the drive stage.
-  //
-  // overdrive  (TS-808): op-amp soft clip via feedback diodes.
-  //   1N914 silicon diodes (~0.65V Vf) in anti-parallel in the feedback loop.
-  //   The circuit is nearly symmetric; slight asymmetry via gain-stage topology.
-  //   pos = 0.65, neg = 0.65 (sym soft tanh)
-  //
-  // distortion (RAT):  LM308 op-amp hard-limits then two silicon diodes clip.
-  //   Symmetric 1N914 diodes: both sides clip at the same threshold.
-  //   Harder knee than TS; closer to hard clip. pos = 0.65, neg = 0.65 (atan steep)
-  //
-  // mosfet     (OCD):  J201 JFET + silicon diode asymmetric clipping.
-  //   Positive half: JFET exponential saturation (soft, rolls off gradually).
-  //   Negative half: single diode hard clip (sharper, lower threshold).
-  //   pos = 0.70, neg = 0.38
-  //
-  // fuzz       (Fuzz Face / Big Muff):
-  //   Fuzz Face: two germanium transistors near saturation, near-square wave.
-  //   Big Muff: four cascaded clipping stages – symmetric, near-square.
-  //   Both produce extreme limiting. pos = neg = 0.22
-  //
-  // rectifier  (Mesa Boogie Dual Rectifier):
-  //   Named after the 5AR4 tube rectifier in the PSU which "sags" under load.
-  //   This causes asymmetric compression: heavy positive peak compression,
-  //   harder negative clamp. Modelled as asymmetric tanh + hard clip.
-  //   pos = 0.80 (soft), neg = 0.30 (hard)
-  //
-  // timmy      (Paul Cochrane Timmy – transparent OD):
-  //   Single silicon diode clips only the NEGATIVE half; positive passes nearly
-  //   clean. This creates strong even harmonics while preserving touch dynamics.
-  //   pos = 1.10 (barely clips), neg = 0.45 (clips more decisively)
-
-  const ALGO_FIXED = {
-    overdrive:  { pos: 0.65, neg: 0.65 },
-    distortion: { pos: 0.65, neg: 0.65 },
-    mosfet:     { pos: 0.70, neg: 0.38 },
-    fuzz:       { pos: 0.22, neg: 0.22 },
-    rectifier:  { pos: 0.80, neg: 0.30 },
-    timmy:      { pos: 1.10, neg: 0.45 },
+  const PEDAL_MODELS = {
+    ts808: {
+      clip: { kind: "soft", pos: 1.0, neg: 1.0, softness: 1.6, driveScale: 0.8, driveBaseDb: 6 },
+      pre: {
+        gainBaseDb: 10,
+        gainScaleDb: 0.6,
+        hpfHzBase: 200,
+        hpfHzDriveRange: 520,
+        lpfHzHi: 61200,
+        lpfHzLo: 5600,
+      },
+      tone: { hpDark: 80, hpBright: 190, lpDark: 2600, lpBright: 7800 },
+    },
+    ds1: {
+      clip: { kind: "diode_piecewise", pos: 0.7, neg: 0.7, slope: 0.12, driveScale: 0.65, driveBaseDb: 8 },
+      pre: {
+        gainBaseDb: 16,
+        gainScaleDb: 1.15,
+        hpfHzBase: 3,
+        hpfHzDriveRange: 69,
+        lpfHzHi: 17000,
+        lpfHzLo: 7200,
+        asymBias: 0.022,
+        boosterSoftness: 1.2,
+      },
+      tone: { hpDark: 90, hpBright: 220, lpDark: 2400, lpBright: 9200 },
+    },
   };
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -114,12 +100,13 @@
     return { fftLen: 4096, hop: 2048, oversample: 4 }; // fixed DETAIL mode
   }
 
-  function getThresholds(algo, userTh, asymOn) {
-    if (algo === "hardclip") {
-      const th = clamp(userTh, 0.05, 1.5);
-      return { pos: th, neg: asymOn ? 2.0 : th };   // asymOn = only clip positive
-    }
-    return Object.assign({}, ALGO_FIXED[algo] || { pos: 0.65, neg: 0.65 });
+  function getModel(algo) {
+    return PEDAL_MODELS[algo] || PEDAL_MODELS.ts808;
+  }
+
+  function clampCutoffHz(cutoffHz, sr, fallbackHz) {
+    if (!Number.isFinite(cutoffHz) || cutoffHz <= 0) return fallbackHz;
+    return clamp(cutoffHz, 5, sr * 0.45);
   }
 
   // ─── Signal generation ────────────────────────────────────────────────────
@@ -179,9 +166,10 @@
   }
 
   function onePoleLowpass(signal, cutoffHz, sr) {
+    const fc = clampCutoffHz(cutoffHz, sr, 18000);
     const out = new Float32Array(signal.length);
     const dt = 1 / sr;
-    const rc = 1 / (2 * Math.PI * cutoffHz);
+    const rc = 1 / (2 * Math.PI * fc);
     const alpha = dt / (rc + dt);
     out[0] = signal[0] || 0;
     for (let i = 1; i < signal.length; i++) out[i] = out[i - 1] + alpha * (signal[i] - out[i - 1]);
@@ -189,9 +177,10 @@
   }
 
   function onePoleHighpass(signal, cutoffHz, sr) {
+    const fc = clampCutoffHz(cutoffHz, sr, 80);
     const out = new Float32Array(signal.length);
     const dt = 1 / sr;
-    const rc = 1 / (2 * Math.PI * cutoffHz);
+    const rc = 1 / (2 * Math.PI * fc);
     const alpha = rc / (rc + dt);
     out[0] = signal[0] || 0;
     for (let i = 1; i < signal.length; i++) out[i] = alpha * (out[i - 1] + signal[i] - signal[i - 1]);
@@ -206,100 +195,81 @@
   }
 
   // ─── Distortion engine ───────────────────────────────────────────────────
-  function applyDistortion(x, cfg) {
+  function mixByTone(toneNorm, dark, bright) {
+    return dark + (bright - dark) * toneNorm;
+  }
+
+  function softClipAsym(v, pos, neg, softness) {
+    if (v >= 0) return pos * Math.tanh((v / pos) * softness);
+    return -neg * Math.tanh((-v / neg) * softness);
+  }
+
+  function piecewiseDiodeClip(v, pos, neg, slope) {
+    if (v > pos) return pos + (v - pos) * slope;
+    if (v < -neg) return -neg + (v + neg) * slope;
+    return v;
+  }
+
+  function applyPedalModel(x, cfg, sr) {
+    const model = getModel(cfg.algo);
+    const driveNorm = clamp(cfg.driveDb / 20, 0, 1);
+    const toneNorm = clamp((cfg.tone + 1) * 0.5, 0, 1);
+    const stageA = x.slice();
+    const clipOut = new Float32Array(x.length);
     const y = new Float32Array(x.length);
-    const drive = dbToLin(cfg.driveDb);
-    const { pos, neg } = getThresholds(cfg.algo, cfg.threshold, cfg.asymOn);
-    const on   = cfg.distOn;
-    const algo = cfg.algo;
 
-    for (let i = 0; i < x.length; i++) {
-      let s = x[i];
-      if (on) {
-        const d = s * drive;
-
-        if (algo === "hardclip") {
-          // ── Digital hard clip: flat ceiling, square wave at high drive ──
-          s = clamp(d, -neg, pos);
-
-        } else if (algo === "overdrive") {
-          // ── TS-808 / Tube Screamer style ──
-          // Soft symmetric tanh (diodes in op-amp feedback loop).
-          // Rounds off peaks smoothly → warm, compressed character.
-          s = d >= 0
-            ? pos * Math.tanh(d / pos)
-            : -neg * Math.tanh(-d / neg);
-
-        } else if (algo === "distortion") {
-          // ── RAT / DS-1 style ──
-          // Atan curve with a steeper knee than TS, then hard rail.
-          // LM308 goes into saturation abruptly → more aggressive edge.
-          const k = 3.5;
-          s = d >= 0
-            ? pos * (2/Math.PI) * Math.atan(d / pos * k)
-            : -neg * (2/Math.PI) * Math.atan(-d / neg * k);
-          s = clamp(s, -neg, pos);
-
-        } else if (algo === "mosfet") {
-          // ── Fulltone OCD (J201 JFET + diode) style ──
-          // Positive: JFET exponential saturation (smooth rollover).
-          // Negative: single diode → harder, lower threshold.
-          if (d >= 0) {
-            s = pos * (1 - Math.exp(-d / pos * 1.6));
-          } else {
-            const a = -d / neg;
-            // Soft knee up to threshold, then hard limit
-            s = -(a < 1
-              ? neg * (a - a * a * a / 3)
-              : neg * Math.min(1.0, 0.7 + 0.4 * (a - 1)));
-          }
-
-        } else if (algo === "fuzz") {
-          // ── Fuzz Face / Big Muff style ──
-          // Extreme clipping → near-square wave.
-          // Very steep tanh (k=10) approximates the transistor saturation + cascaded stages.
-          const sign = d >= 0 ? 1 : -1;
-          s = sign * pos * Math.tanh(Math.abs(d) / pos * 10);
-          s = clamp(s, -neg, pos);
-
-        } else if (algo === "rectifier") {
-          // ── Mesa Boogie Dual Rectifier style ──
-          // Tube rectifier sag: positive peaks compressed softly,
-          // negative half meets a harder, lower clip threshold.
-          if (d >= 0) {
-            s = pos * Math.tanh(d / pos * 2.5);  // soft heavy compression
-          } else {
-            s = clamp(d, -neg, 0);               // hard clip at lower neg threshold
-          }
-
-        } else if (algo === "timmy") {
-          // ── Paul Cochrane Timmy (transparent OD) style ──
-          // Single diode: only NEGATIVE half clips (at lower threshold).
-          // Positive half passes nearly clean through the op-amp.
-          // Asymmetry produces even harmonics → "warm" but transparent.
-          const clean = d;
-          const clipped = d >= 0
-            ? d
-            : -neg * Math.tanh(-d / neg * 2.1);
-          s = 0.72 * clean + 0.28 * clipped; // preserve attack/transparency
-        }
+    if (cfg.distOn && cfg.stageBoostOn) {
+      const preGainDb = model.pre.gainBaseDb + cfg.driveDb * model.pre.gainScaleDb;
+      const preGain = dbToLin(preGainDb);
+      const bias = (model.pre.asymBias || 0) * driveNorm;
+      for (let i = 0; i < stageA.length; i++) {
+        let v = stageA[i] * preGain + bias;
+        if (model.pre.boosterSoftness) v = Math.tanh(v * model.pre.boosterSoftness);
+        stageA[i] = v;
       }
-      y[i] = s;
+      const preHpfHz = model.pre.hpfHzBase + model.pre.hpfHzDriveRange * driveNorm;
+      const preLpfHz = mixByTone(driveNorm, model.pre.lpfHzHi, model.pre.lpfHzLo);
+      const filteredA = onePoleLowpass(onePoleHighpass(stageA, preHpfHz, sr), preLpfHz, sr);
+      stageA.set(filteredA);
     }
-    return { output: y, pos, neg };
+
+    if (cfg.distOn && cfg.stageClipOn) {
+      const clipDrive = dbToLin(model.clip.driveBaseDb + cfg.driveDb * model.clip.driveScale);
+      for (let i = 0; i < stageA.length; i++) {
+        const d = stageA[i] * clipDrive;
+        clipOut[i] = model.clip.kind === "soft"
+          ? softClipAsym(d, model.clip.pos, model.clip.neg, model.clip.softness)
+          : piecewiseDiodeClip(d, model.clip.pos, model.clip.neg, model.clip.slope);
+      }
+    } else {
+      clipOut.set(stageA);
+    }
+
+    if (cfg.distOn && cfg.stageToneOn) {
+      const toneHpHz = mixByTone(toneNorm, model.tone.hpDark, model.tone.hpBright);
+      const toneLpHz = mixByTone(toneNorm, model.tone.lpDark, model.tone.lpBright);
+      const toned = onePoleLowpass(onePoleHighpass(clipOut, toneHpHz, sr), toneLpHz, sr);
+      y.set(toned);
+    } else {
+      y.set(clipOut);
+    }
+
+    return { preClip: stageA, output: y, pos: model.clip.pos, neg: model.clip.neg };
   }
 
   function processDistortionWithAA(input, cfg, oversample) {
-    if (oversample <= 1) return applyDistortion(input, cfg);
+    if (oversample <= 1) return applyPedalModel(input, cfg, sampleRate);
     const up = upsampleLinear(input, oversample);
-    const highCfg = { ...cfg };
-    const high = applyDistortion(up, highCfg);
+    const high = applyPedalModel(up, cfg, sampleRate * oversample);
     // Anti-aliasing: low-pass before decimation (kept below base Nyquist)
     const cutoff = sampleRate * 0.45;
-    let filtered = onePoleLowpass(high.output, cutoff, sampleRate * oversample);
-    filtered = onePoleLowpass(filtered, cutoff, sampleRate * oversample);
-    const down = downsample(filtered, oversample, input.length);
-    return { output: down, pos: high.pos, neg: high.neg };
+    let filteredOut = onePoleLowpass(high.output, cutoff, sampleRate * oversample);
+    filteredOut = onePoleLowpass(filteredOut, cutoff, sampleRate * oversample);
+    let filteredPre = onePoleLowpass(high.preClip, cutoff, sampleRate * oversample);
+    filteredPre = onePoleLowpass(filteredPre, cutoff, sampleRate * oversample);
+    const downOut = downsample(filteredOut, oversample, input.length);
+    const downPre = downsample(filteredPre, oversample, input.length);
+    return { preClip: downPre, output: downOut, pos: high.pos, neg: high.neg };
   }
 
   // ─── Audio playback ───────────────────────────────────────────────────────
@@ -867,9 +837,11 @@
     return {
       algo: els.algo.value,
       distOn: !!els.distOn.checked,
-      threshold: +els.threshold.value,
       drive: +els.drive.value,
-      asym: !!els.asymToggle.checked,
+      stageBoostOn: !!els.stageBoostOn.checked,
+      stageClipOn: !!els.stageClipOn.checked,
+      stageToneOn: !!els.stageToneOn.checked,
+      tone: +els.tone.value,
       splitView: !!els.splitView.checked,
       showThreshMain: !!els.showThreshMain.checked,
       showThreshOut: !!els.showThreshOut.checked,
@@ -888,12 +860,15 @@
 
   function applySnapshot(s) {
     if (!s) return;
-    els.algo.value = s.algo;
+    els.algo.value = PEDAL_MODELS[s.algo] ? s.algo : "ts808";
     els.distOn.checked = !!s.distOn;
-    els.threshold.value = String(s.threshold);
-    els.thresholdNum.value = String(s.threshold);
     setDriveValue(+s.drive, false);
-    els.asymToggle.checked = !!s.asym;
+    els.stageBoostOn.checked = s.stageBoostOn !== false;
+    els.stageClipOn.checked = s.stageClipOn !== false;
+    els.stageToneOn.checked = s.stageToneOn !== false;
+    const toneVal = Number.isFinite(+s.tone) ? +s.tone : 0;
+    els.tone.value = String(toneVal);
+    els.toneNum.value = String(toneVal);
     els.splitView.checked = !!s.splitView;
     els.showThreshMain.checked = !!s.showThreshMain;
     els.showThreshOut.checked = !!s.showThreshOut;
@@ -984,14 +959,13 @@
       els.gainDbNum.value = FIXED_INPUT_GAIN_DB;
       const cfg = {
         distOn: els.distOn.checked, algo: els.algo.value,
-        threshold: +els.threshold.value, driveDb: +els.drive.value,
-        asymOn: els.asymToggle.checked,
+        driveDb: +els.drive.value, tone: +els.tone.value,
+        stageBoostOn: !!els.stageBoostOn.checked,
+        stageClipOn: !!els.stageClipOn.checked,
+        stageToneOn: !!els.stageToneOn.checked,
       };
       const fftCfg = getFftConfig();
-      const preClip = new Float32Array(gained.length);
-      const driveLin = dbToLin(+els.drive.value);
-      for (let i = 0; i < preClip.length; i++) preClip[i] = gained[i] * driveLin;
-      const { output, pos, neg } = processDistortionWithAA(gained, cfg, fftCfg.oversample);
+      const { preClip, output, pos, neg } = processDistortionWithAA(gained, cfg, fftCfg.oversample);
       state.inputRaw=raw; state.inputGained=gained; state.preClip = preClip; state.output=output;
       drawTime(gained, preClip, output, pos, neg);
       drawTimeOut(output, pos, neg);
@@ -1004,9 +978,7 @@
 
   // ─── UI helpers ───────────────────────────────────────────────────────────
   function updateAlgoUI() {
-    const isHard = els.algo.value === "hardclip";
-    els.threshRow.style.display = isHard ? "" : "none";
-    els.asymRow.style.display   = isHard ? "" : "none";
+    if (!PEDAL_MODELS[els.algo.value]) els.algo.value = "ts808";
   }
 
   function bindPair(rangeEl, numEl) {
@@ -1050,20 +1022,20 @@
 
   function bindEvents() {
     bindPair(els.sineFreq, els.sineFreqNum);
-    bindPair(els.threshold, els.thresholdNum);
     bindPair(els.timeWindowMs, els.timeWindowMsNum);
     bindPair(els.timeOffsetMs, els.timeOffsetMsNum);
     bindPair(els.transportPosMs, els.transportPosMsNum);
     bindPair(els.fftMaxHz, els.fftMaxHzNum);
     bindPair(els.fftDbMin, els.fftDbMinNum);
     bindPair(els.playbackGainDb, els.playbackGainDbNum);
+    bindPair(els.tone, els.toneNum);
     els.transportPosMs.addEventListener("input", () => { syncOffsetToTransport(); renderAll(); });
     els.transportPosMsNum.addEventListener("input", () => { syncOffsetToTransport(); renderAll(); });
     els.timeOffsetMs.addEventListener("input", () => { syncTransportToOffset(); });
     els.timeOffsetMsNum.addEventListener("input", () => { syncTransportToOffset(); });
 
     els.algo.addEventListener("change", () => { updateAlgoUI(); renderAll(); });
-    [els.distOn, els.asymToggle, els.splitView, els.fftLogX, els.showThreshMain, els.showThreshOut, els.showPreClip]
+    [els.distOn, els.stageBoostOn, els.stageClipOn, els.stageToneOn, els.splitView, els.fftLogX, els.showThreshMain, els.showThreshOut, els.showPreClip]
       .forEach(el => el?.addEventListener("change", renderAll));
     els.distOnFoot?.addEventListener("click", () => {
       els.distOn.checked = !els.distOn.checked;

@@ -248,25 +248,20 @@
 
     <div class="row">
       <label for="algo">失真类型</label>
-      <span class="hint">每种类型对应不同削波电路模型，阈值根据对应硬件固定（Hard Clip 除外）</span>
+      <span class="hint">先实现两种经典：TS808（反馈软削波）与 DS-1（前级放大 + 硅二极管硬削波）</span>
       <select id="algo">
-        <option value="hardclip">Hard Clip · 数字硬削波（阈值可调）</option>
-        <option value="overdrive">Overdrive · TS-808 / SD-1 / BD-2 软过载</option>
-        <option value="distortion">Distortion · Pro Co RAT / DS-1 硬失真</option>
-        <option value="mosfet">MOSFET OD · Fulltone OCD 不对称过载</option>
-        <option value="fuzz">Fuzz · Fuzz Face / Big Muff 模糊失真</option>
-        <option value="rectifier">Rectifier · Mesa Boogie Dual Rectifier 整流失真</option>
-        <option value="timmy">Transparent OD · Timmy 透明过载（单侧削波）</option>
+        <option value="ts808">Tube Screamer TS808 · Soft Clip in Feedback</option>
+        <option value="ds1">Boss DS-1 · Pre-Boost + Silicon Hard Clip</option>
       </select>
     </div>
 
-    <div id="threshRow" class="row inline">
+    <div class="row inline">
       <div>
-        <label for="threshold">削波阈值 Clip Threshold</label>
-        <span class="hint">波形幅度超过此值时开始被削平。仅 Hard Clip 可调；其他类型根据对应效果器的二极管前向电压固定</span>
-        <input id="threshold" type="range" min="0.1" max="1.0" step="0.01" value="0.65" />
+        <label for="tone">Tone（后级滤波）</label>
+        <span class="hint">-1 更暗、更厚；+1 更亮、更锐。用于演示 Section C 对听感和频谱的影响</span>
+        <input id="tone" type="range" min="-1" max="1" step="0.01" value="0" />
       </div>
-      <input id="thresholdNum" type="number" min="0.1" max="1.0" step="0.01" value="0.65" />
+      <input id="toneNum" type="number" min="-1" max="1" step="0.01" value="0" />
     </div>
 
     <div class="row foot-row">
@@ -284,13 +279,33 @@
       <input id="drive" type="range" min="0" max="20" step="0.1" value="8" style="display:none;" />
     </div>
 
-    <div id="asymRow" class="switch-row">
+    <div class="switch-row">
       <div class="switch-label-wrap">
-        <div class="switch-label">非对称削波 Asymmetric</div>
-        <span class="hint">仅 Hard Clip 有效。正半波保持设定阈值，负半波不削波，产生偶次谐波，音色更"暖"</span>
+        <div class="switch-label">Section A: Internal Boost / Pre-Shape</div>
+        <span class="hint">前级增益与预滤波（决定进入削波器前的频率与动态）</span>
       </div>
       <label class="switch">
-        <input id="asymToggle" type="checkbox" />
+        <input id="stageBoostOn" type="checkbox" checked />
+        <span class="sw-track"></span>
+      </label>
+    </div>
+    <div class="switch-row">
+      <div class="switch-label-wrap">
+        <div class="switch-label">Section B: Diode Clipping Core</div>
+        <span class="hint">核心非线性削波：TS808 软削波 / DS-1 硬削波</span>
+      </div>
+      <label class="switch">
+        <input id="stageClipOn" type="checkbox" checked />
+        <span class="sw-track"></span>
+      </label>
+    </div>
+    <div class="switch-row">
+      <div class="switch-label-wrap">
+        <div class="switch-label">Section C: Tone Shaping</div>
+        <span class="hint">后级音色滤波，决定亮度与高频毛刺感</span>
+      </div>
+      <label class="switch">
+        <input id="stageToneOn" type="checkbox" checked />
         <span class="sw-track"></span>
       </label>
     </div>
@@ -305,7 +320,7 @@
 
     <div class="legend">
       🟢 绿色 = 输入信号（含 Gain）<br>
-      🟡 黄虚线 = Drive 放大后的预削波信号（进入 clipping 前）<br>
+      🟡 黄虚线 = Section A 后、进入削波核心前的信号<br>
       🔵 蓝色 = 输出信号（削波后）<br>
       <span style="color:#ffb478">- - -</span> 橙虚线 = 削波阈值
     </div>
@@ -313,8 +328,8 @@
     <!-- Future references / external links / citation block -->
     <div class="help-block">
       <strong>算法声明（长期显示）</strong><br>
-      当前算法用于教学示意：强调削波方式与听感差异，并非商业综合效果器中的完整白盒电路建模。<br>
-      后续可在此补充参考资料与外链（TS/RAT/OCD/Timmy/Fuzz 等）。
+      当前版本先对齐 ElectroSmash 的 TS808 与 DS-1 主链路：A 前级、B 削波核心、C 音色滤波。<br>
+      目标是“可听可见的电路分段理解”，不是完整 SPICE 级复刻。
     </div>
     <div class="help-block">
       <strong>削波阈值说明</strong><br>

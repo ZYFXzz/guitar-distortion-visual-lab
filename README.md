@@ -8,20 +8,19 @@ After GitHub Pages is enabled, this project will be available at:
 
 `https://zyfxzz.github.io/guitar-distortion-visual-lab/`
 
-## Features
+## Features (current develop focus)
 
 - Input source: sine wave / guitar chord sample / guitar single-note sample
 - Upload local guitar audio files in-browser
-- Gain stage and distortion bypass mode
-- Distortion algorithms:
-  - hard clip
-  - soft clip (tanh)
-  - distortion (atan)
-  - overdrive
-  - mosfet-like
-  - fuzz
-  - rectifier
-- Asymmetry control for asymmetric clipping
+- Distortion bypass mode
+- Circuit-focused pedal models:
+  - Tube Screamer TS808 (feedback-path soft clipping)
+  - Boss DS-1 (pre-boost + silicon hard clipping)
+- 3-section architecture with independent toggles:
+  - Section A: internal boost / pre-shaping
+  - Section B: clipping core
+  - Section C: tone shaping
+- Tone control for post-clipping voicing
 - Time-domain overlay (input vs output) with threshold guide lines
 - Frequency-domain overlay (FFT magnitude)
 - Play input and output audio in-browser
