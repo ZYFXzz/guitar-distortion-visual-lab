@@ -18,7 +18,7 @@
     gainDb: $("gainDb"), gainDbNum: $("gainDbNum"), gainRow: $("gainRow"),
     distOn: $("distOn"), algo: $("algo"),
     drive: $("drive"), driveNum: $("driveNum"), driveKnob: $("driveKnob"),
-    level: $("level"), levelNum: $("levelNum"),
+    level: $("level"), levelNum: $("levelNum"), levelKnob: $("levelKnob"),
     stageBoostOn: $("stageBoostOn"), stageClipOn: $("stageClipOn"), stageToneOn: $("stageToneOn"),
     tone: $("tone"), toneNum: $("toneNum"),
     timeWindowMs: $("timeWindowMsUi") || $("timeWindowMs"), timeWindowMsNum: $("timeWindowMsUiNum") || $("timeWindowMsNum"),
@@ -50,7 +50,7 @@
   const ctxFreq    = els.freqCanvas.getContext("2d");
 
   const state = {
-    inputRaw: null, inputGained: null, preClip: null, output: null,
+    inputRaw: null, inputGained: null, preClip: null, clipCore: null, output: null,
     fileBuffers: [null, null, null],
     audioCtx: null, sourceNode: null, sourceGainNode: null, masterGain: null,
     currentPlayBuffer: null,
@@ -75,7 +75,7 @@
         lpfHzLo: 5600,
       },
       tone: { hpDark: 80, hpBright: 190, lpDark: 2600, lpBright: 7800 },
-      output: { minDb: -40, taper: 1.9, headroom: 1.35, clipSoftness: 1.8 },
+      output: { minDb: -34, maxDb: 4, taper: 1.9, headroom: 2.0, satSlope: 0.2, satMax: 2.8 },
     },
     ds1: {
       clip: { kind: "diode_piecewise", pos: 0.7, neg: 0.7, slope: 0.12, driveScale: 0.65, driveBaseDb: 8 },
@@ -90,7 +90,7 @@
         boosterSoftness: 1.2,
       },
       tone: { hpDark: 90, hpBright: 220, lpDark: 2400, lpBright: 9200 },
-      output: { minDb: -42, taper: 1.8, headroom: 1.45, clipSoftness: 1.7 },
+      output: { minDb: -38, maxDb: 8, taper: 1.8, headroom: 2.2, satSlope: 0.22, satMax: 3.0 },
     },
   };
 
@@ -216,8 +216,18 @@
   function outputLevelGain(levelNorm, outCfg) {
     const k = clamp(levelNorm, 0, 1);
     const curved = Math.pow(k, outCfg.taper);
-    const db = outCfg.minDb + (0 - outCfg.minDb) * curved;
+    const db = outCfg.minDb + (outCfg.maxDb - outCfg.minDb) * curved;
     return dbToLin(db);
+  }
+
+  function outputStageSaturate(v, outCfg) {
+    const abs = Math.abs(v);
+    const hr = outCfg.headroom;
+    if (abs <= hr) return v;
+    const sign = v >= 0 ? 1 : -1;
+    const excess = abs - hr;
+    const limited = hr + excess * outCfg.satSlope;
+    return sign * Math.min(outCfg.satMax, limited);
   }
 
   function applyPedalModel(x, cfg, sr) {
@@ -226,6 +236,7 @@
     const toneNorm = clamp((cfg.tone + 1) * 0.5, 0, 1);
     const levelNorm = clamp(cfg.level, 0, 1);
     const stageA = x.slice();
+    const clipIn = new Float32Array(x.length);
     const clipOut = new Float32Array(x.length);
     const y = new Float32Array(x.length);
 
@@ -244,16 +255,16 @@
       stageA.set(filteredA);
     }
 
+    const clipDrive = dbToLin(model.clip.driveBaseDb + cfg.driveDb * model.clip.driveScale);
+    for (let i = 0; i < stageA.length; i++) clipIn[i] = stageA[i] * clipDrive;
     if (cfg.distOn && cfg.stageClipOn) {
-      const clipDrive = dbToLin(model.clip.driveBaseDb + cfg.driveDb * model.clip.driveScale);
       for (let i = 0; i < stageA.length; i++) {
-        const d = stageA[i] * clipDrive;
         clipOut[i] = model.clip.kind === "soft"
-          ? softClipAsym(d, model.clip.pos, model.clip.neg, model.clip.softness)
-          : piecewiseDiodeClip(d, model.clip.pos, model.clip.neg, model.clip.slope);
+          ? softClipAsym(clipIn[i], model.clip.pos, model.clip.neg, model.clip.softness)
+          : piecewiseDiodeClip(clipIn[i], model.clip.pos, model.clip.neg, model.clip.slope);
       }
     } else {
-      clipOut.set(stageA);
+      clipOut.set(clipIn);
     }
 
     if (cfg.distOn && cfg.stageToneOn) {
@@ -268,12 +279,10 @@
     if (cfg.distOn) {
       const levelGain = outputLevelGain(levelNorm, model.output);
       for (let i = 0; i < y.length; i++) y[i] *= levelGain;
-      for (let i = 0; i < y.length; i++) {
-        y[i] = softClipAsym(y[i], model.output.headroom, model.output.headroom, model.output.clipSoftness);
-      }
+      for (let i = 0; i < y.length; i++) y[i] = outputStageSaturate(y[i], model.output);
     }
 
-    return { preClip: stageA, output: y, pos: model.clip.pos, neg: model.clip.neg };
+    return { preClip: clipIn, clipCore: clipOut, output: y, pos: model.clip.pos, neg: model.clip.neg };
   }
 
   function processDistortionWithAA(input, cfg, oversample) {
@@ -284,11 +293,14 @@
     const cutoff = sampleRate * 0.45;
     let filteredOut = onePoleLowpass(high.output, cutoff, sampleRate * oversample);
     filteredOut = onePoleLowpass(filteredOut, cutoff, sampleRate * oversample);
+    let filteredCore = onePoleLowpass(high.clipCore, cutoff, sampleRate * oversample);
+    filteredCore = onePoleLowpass(filteredCore, cutoff, sampleRate * oversample);
     let filteredPre = onePoleLowpass(high.preClip, cutoff, sampleRate * oversample);
     filteredPre = onePoleLowpass(filteredPre, cutoff, sampleRate * oversample);
     const downOut = downsample(filteredOut, oversample, input.length);
+    const downCore = downsample(filteredCore, oversample, input.length);
     const downPre = downsample(filteredPre, oversample, input.length);
-    return { preClip: downPre, output: downOut, pos: high.pos, neg: high.neg };
+    return { preClip: downPre, clipCore: downCore, output: downOut, pos: high.pos, neg: high.neg };
   }
 
   // ─── Audio playback ───────────────────────────────────────────────────────
@@ -668,6 +680,15 @@
     ctx.stroke();
   }
 
+  function calcWaveScale(signals, floor = 1.6) {
+    let peak = 1e-6;
+    for (const sig of signals) {
+      if (!sig) continue;
+      for (let i = 0; i < sig.length; i++) peak = Math.max(peak, Math.abs(sig[i]));
+    }
+    return Math.max(floor, Math.min(4.5, peak * 1.15));
+  }
+
   function drawAxisLabelsTime(ctx, area, windowMs, yScale) {
     ctx.fillStyle = "#9eb1cc";
     ctx.font = "10px system-ui, sans-serif";
@@ -706,9 +727,9 @@
     }
   }
 
-  function drawTime(inSig, preClipSig, outSig, pos, neg) {
+  function drawTime(inSig, preClipSig, clipCoreSig, pos, neg) {
     const w = els.timeCanvas.clientWidth, h = els.timeCanvas.clientHeight;
-    const yS = 2.0;
+    const yS = calcWaveScale([inSig, preClipSig, clipCoreSig]);
     const fullArea = { l: 52, t: 26, w: Math.max(10, w - 68), h: Math.max(10, h - 58) };
     drawGrid(ctxTime, fullArea, 10, 8);
     const {start, end} = getTimeWindow(Math.min(inSig.length, outSig.length));
@@ -733,11 +754,11 @@
         ctxTime.setLineDash([]);
       }
       ctxTime.restore();
-      // Bottom half: output
+      // Bottom half: clipping core output (threshold meaning is clear here)
       ctxTime.save();
       ctxTime.beginPath(); ctxTime.rect(botArea.l, botArea.t, botArea.w, botArea.h); ctxTime.clip();
       if (showThreshMain) drawThreshLines(ctxTime, botArea, pos, neg, yS);
-      drawWave(ctxTime, botArea, outSig, "rgba(90,160,255,0.9)", 1.5, start, end, yS);
+      drawWave(ctxTime, botArea, clipCoreSig, "rgba(90,160,255,0.9)", 1.5, start, end, yS);
       ctxTime.restore();
     } else {
       if (showThreshMain) drawThreshLines(ctxTime, fullArea, pos, neg, yS);
@@ -747,19 +768,22 @@
         drawWave(ctxTime, fullArea, preClipSig, "rgba(235,220,90,0.9)", 1.2, start, end, yS);
         ctxTime.setLineDash([]);
       }
-      drawWave(ctxTime, fullArea, outSig, "rgba(90,160,255,0.9)", 1.5, start,end, yS);
+      drawWave(ctxTime, fullArea, clipCoreSig, "rgba(90,160,255,0.9)", 1.5, start,end, yS);
     }
     drawAxisLabelsTime(ctxTime, fullArea, windowMs, yS);
   }
 
-  function drawTimeOut(outSig, pos, neg) {
+  function drawTimeOut(outSig, clipCoreSig, pos, neg) {
     const w = els.timeOutCanvas.clientWidth, h = els.timeOutCanvas.clientHeight;
-    const yS = 2.0;
+    const yS = calcWaveScale([outSig, clipCoreSig]);
     const area = { l: 52, t: 26, w: Math.max(10, w - 68), h: Math.max(10, h - 58) };
     drawGrid(ctxTimeOut, area, 8, 8);
     const {start, end} = getTimeWindow(outSig.length);
     const showThreshOut = els.showThreshOut ? !!els.showThreshOut.checked : true;
     if (showThreshOut) drawThreshLines(ctxTimeOut, area, pos, neg, yS);
+    ctxTimeOut.setLineDash([6, 4]);
+    drawWave(ctxTimeOut, area, clipCoreSig, "rgba(120,180,255,0.75)", 1.1, start,end, yS);
+    ctxTimeOut.setLineDash([]);
     drawWave(ctxTimeOut, area, outSig, "rgba(90,160,255,0.9)", 1.7, start,end, yS);
     drawAxisLabelsTime(ctxTimeOut, area, +els.timeWindowMs.value, yS);
   }
@@ -833,6 +857,16 @@
     if (rerender) renderAll();
   }
 
+  function setLevelValue(v, rerender = true) {
+    const clamped = clamp(v, +els.level.min, +els.level.max);
+    els.level.value = clamped.toFixed(2);
+    els.levelNum.value = clamped.toFixed(2);
+    const norm = (clamped - (+els.level.min)) / (+els.level.max - +els.level.min);
+    const deg = -130 + norm * 260;
+    if (els.levelKnob) els.levelKnob.style.transform = `rotate(${deg}deg)`;
+    if (rerender) renderAll();
+  }
+
   function syncDistFootSwitch() {
     if (!els.distOnFoot) return;
     const on = !!els.distOn.checked;
@@ -884,8 +918,7 @@
     els.distOn.checked = !!s.distOn;
     setDriveValue(+s.drive, false);
     const levelVal = Number.isFinite(+s.level) ? +s.level : 0.7;
-    els.level.value = String(levelVal);
-    els.levelNum.value = String(levelVal);
+    setLevelValue(levelVal, false);
     els.stageBoostOn.checked = s.stageBoostOn !== false;
     els.stageClipOn.checked = s.stageClipOn !== false;
     els.stageToneOn.checked = s.stageToneOn !== false;
@@ -988,10 +1021,10 @@
         stageToneOn: !!els.stageToneOn.checked,
       };
       const fftCfg = getFftConfig();
-      const { preClip, output, pos, neg } = processDistortionWithAA(gained, cfg, fftCfg.oversample);
-      state.inputRaw=raw; state.inputGained=gained; state.preClip = preClip; state.output=output;
-      drawTime(gained, preClip, output, pos, neg);
-      drawTimeOut(output, pos, neg);
+      const { preClip, clipCore, output, pos, neg } = processDistortionWithAA(gained, cfg, fftCfg.oversample);
+      state.inputRaw=raw; state.inputGained=gained; state.preClip = preClip; state.clipCore = clipCore; state.output=output;
+      drawTime(gained, preClip, clipCore, pos, neg);
+      drawTimeOut(output, clipCore, pos, neg);
       drawFreq(gained, output);
       drawTransportWave(); // refresh overview
     } catch (e) {
@@ -1052,7 +1085,6 @@
     bindPair(els.fftDbMin, els.fftDbMinNum);
     bindPair(els.playbackGainDb, els.playbackGainDbNum);
     bindPair(els.tone, els.toneNum);
-    bindPair(els.level, els.levelNum);
     els.transportPosMs.addEventListener("input", () => { syncOffsetToTransport(); renderAll(); });
     els.transportPosMsNum.addEventListener("input", () => { syncOffsetToTransport(); renderAll(); });
     els.timeOffsetMs.addEventListener("input", () => { syncTransportToOffset(); });
@@ -1120,6 +1152,26 @@
       els.driveKnob.addEventListener("keydown", (e) => {
         if (e.key === "ArrowRight" || e.key === "ArrowUp") setDriveValue(+els.drive.value + 0.2);
         if (e.key === "ArrowLeft" || e.key === "ArrowDown") setDriveValue(+els.drive.value - 0.2);
+      });
+    }
+
+    // Level circular knob interactions
+    els.level.addEventListener("input", () => setLevelValue(+els.level.value));
+    els.levelNum.addEventListener("input", () => setLevelValue(+els.levelNum.value));
+    if (els.levelKnob) {
+      els.levelKnob.addEventListener("wheel", (e) => { e.preventDefault(); setLevelValue(+els.level.value + (e.deltaY > 0 ? -0.02 : 0.02)); }, { passive: false });
+      let levelDragY = null;
+      els.levelKnob.addEventListener("mousedown", (e) => { levelDragY = e.clientY; });
+      window.addEventListener("mousemove", (e) => {
+        if (levelDragY === null) return;
+        const dy = levelDragY - e.clientY;
+        levelDragY = e.clientY;
+        setLevelValue(+els.level.value + dy * 0.004);
+      });
+      window.addEventListener("mouseup", () => { levelDragY = null; });
+      els.levelKnob.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowRight" || e.key === "ArrowUp") setLevelValue(+els.level.value + 0.01);
+        if (e.key === "ArrowLeft" || e.key === "ArrowDown") setLevelValue(+els.level.value - 0.01);
       });
     }
 
@@ -1208,8 +1260,7 @@
     els.fftDbMinNum.value = String(FFT_DB_MIN_DEFAULT);
     setSourceMode(1, false);
     setDriveValue(+els.drive.value, false);
-    els.level.value = "0.7";
-    els.levelNum.value = "0.7";
+    setLevelValue(+els.level.value, false);
     syncDistFootSwitch();
     updateAbStatus();
     updateStageLayout();

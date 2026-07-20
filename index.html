@@ -263,15 +263,6 @@
       </div>
       <input id="toneNum" type="number" min="-1" max="1" step="0.01" value="0" />
     </div>
-    <div class="row inline">
-      <div>
-        <label for="level">Level（输出音量 / Post-Circuit）</label>
-        <span class="hint">输出级音量电位器，位于失真与音色后面。主要做电平匹配；极端大信号时可能触发输出级轻微饱和</span>
-        <input id="level" type="range" min="0" max="1" step="0.01" value="0.7" />
-      </div>
-      <input id="levelNum" type="number" min="0" max="1" step="0.01" value="0.7" />
-    </div>
-
     <div class="row foot-row">
       <label for="drive">驱动量 Drive (dB)</label>
       <button id="distOnFoot" class="footswitch on" type="button">Dist ON</button>
@@ -285,6 +276,15 @@
         <div class="knob-caption"><input id="driveNum" type="number" min="0" max="20" step="0.1" value="8" /></div>
       </div>
       <input id="drive" type="range" min="0" max="20" step="0.1" value="8" style="display:none;" />
+    </div>
+    <div class="row">
+      <label for="level">Level（输出电平）</label>
+      <span class="hint">仿照踏板输出电位器：后级线性电平调节 + 轻微输出级饱和保护。低位衰减，高位可提供 post amplification</span>
+      <div class="knob-wrap">
+        <div id="levelKnob" class="knob-ui" role="button" aria-label="level knob" tabindex="0"></div>
+        <div class="knob-caption"><input id="levelNum" type="number" min="0" max="1" step="0.01" value="0.7" /></div>
+      </div>
+      <input id="level" type="range" min="0" max="1" step="0.01" value="0.7" style="display:none;" />
     </div>
 
     <div class="switch-row">
@@ -328,9 +328,10 @@
 
     <div class="legend">
       🟢 绿色 = 输入信号（含 Gain）<br>
-      🟡 黄虚线 = Section A 后、进入削波核心前的信号<br>
-      🔵 蓝色 = 输出信号（削波后）<br>
-      <span style="color:#ffb478">- - -</span> 橙虚线 = 削波阈值
+      🟡 黄虚线 = 进入 Section B 削波核心前的信号（含驱动量）<br>
+      🔵 蓝色 = Section B 削波核心输出（主窗）/ 最终输出（右窗）<br>
+      <span style="color:#8ab6ff">- - -</span> 淡蓝虚线 = 削波核心输出参考（右窗）<br>
+      <span style="color:#ffb478">- - -</span> 橙虚线 = Section B 削波阈值
     </div>
 
     <!-- Future references / external links / citation block -->
@@ -464,7 +465,7 @@
           </div>
           <div class="scope-controls" style="width:220px;">
             <div class="switch-row">
-              <div class="switch-label-wrap"><div class="switch-label">Threshold 阈值线（输出窗）</div></div>
+              <div class="switch-label-wrap"><div class="switch-label">Clip Threshold 阈值线（Section B 参考）</div></div>
               <label class="switch"><input id="showThreshOutUi" type="checkbox" checked /><span class="sw-track"></span></label>
             </div>
           </div>
